@@ -1,0 +1,21 @@
+{
+  "name": "agent-router-auto-checkin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Daily Agent Router check-in through a persistent GitHub OAuth browser session.",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "doctor": "node --disable-warning=ExperimentalWarning src/cli.js doctor",
+    "setup": "node --disable-warning=ExperimentalWarning src/cli.js setup",
+    "run": "node --disable-warning=ExperimentalWarning src/cli.js run",
+    "install-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-task.ps1",
+    "uninstall-task": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-task.ps1",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "patchright": "^1.51.1"
+  }
+}
