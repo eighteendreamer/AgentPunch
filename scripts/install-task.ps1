@@ -1,3 +1,8 @@
+param(
+    [ValidatePattern('^([01]\d|2[0-3]):[0-5]\d$')]
+    [string]$DailyTime = '09:00'
+)
+
 $ErrorActionPreference = 'Stop'
 
 $taskName = 'AgentRouterDailyCheckin'
@@ -9,7 +14,7 @@ $arguments = "--disable-warning=ExperimentalWarning `"$script`" run"
 $action = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $projectRoot
 $triggers = @(
     New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    New-ScheduledTaskTrigger -Daily -At '09:00'
+    New-ScheduledTaskTrigger -Daily -At $DailyTime
 )
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
@@ -24,4 +29,5 @@ $task = New-ScheduledTask -Action $action -Trigger $triggers -Settings $settings
 Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null
 
 Write-Host "Scheduled task '$taskName' installed."
+Write-Host "Daily run time: $DailyTime"
 Write-Host "Run 'npm run setup' once before relying on the task."

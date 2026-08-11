@@ -156,6 +156,50 @@ async function ensureGithubOAuth(page, baseUrl, log) {
   return { ...self.body.data, checked_in: localUser?.checked_in ?? self.body.data?.checked_in };
 }
 
+async function readAccountBalance(page, knownUser = null) {
+  const result = await page.evaluate(async (userFromOAuth) => {
+    let localUser = userFromOAuth;
+    if (!localUser?.id) {
+      try {
+        localUser = JSON.parse(localStorage.getItem("user"));
+      } catch {
+        localUser = null;
+      }
+    }
+    if (!localUser?.id) return { error: "AUTH_REQUIRED" };
+
+    const headers = {
+      Accept: "application/json",
+      "Cache-Control": "no-store",
+      "New-API-User": String(localUser.id),
+    };
+    const [statusResponse, userResponse] = await Promise.all([
+      fetch("/api/status", { credentials: "include", headers }).then((response) => response.json()),
+      fetch("/api/user/self", { credentials: "include", headers }).then((response) => response.json()),
+    ]);
+    if (!userResponse?.success) return { error: userResponse?.message || "AUTH_REQUIRED" };
+
+    return {
+      quota: Number(userResponse.data?.quota || 0),
+      usedQuota: Number(userResponse.data?.used_quota || 0),
+      requestCount: Number(userResponse.data?.request_count || 0),
+      quotaPerUnit: Number(statusResponse?.data?.quota_per_unit || 500000),
+      displayInCurrency: statusResponse?.data?.display_in_currency !== false,
+    };
+  }, knownUser);
+
+  if (result?.error) throw new AuthRequiredError("站点登录态已失效，请重新绑定 GitHub");
+  const divisor = result.quotaPerUnit > 0 ? result.quotaPerUnit : 500000;
+  return {
+    balance: result.quota / divisor,
+    used: result.usedQuota / divisor,
+    requestCount: result.requestCount,
+    quotaPerUnit: divisor,
+    currency: result.displayInCurrency ? "$" : "",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export async function runCheckin({ profileDir, baseUrl, headless, log }) {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
@@ -168,11 +212,33 @@ export async function runCheckin({ profileDir, baseUrl, headless, log }) {
   try {
     await clearAgentRouterState(context, page, [baseUrl], log);
     const user = await ensureGithubOAuth(page, baseUrl, log);
+    const balance = await readAccountBalance(page, user).catch((error) => {
+      log("warn", "balance", "签到完成，但余额快照暂时无法更新", { error: error.message });
+      return null;
+    });
     return {
       checkedIn: Boolean(user?.checked_in),
       userId: user?.id ?? null,
       username: user?.username ?? null,
+      balance,
     };
+  } finally {
+    await context.close();
+  }
+}
+
+export async function getAccountBalance({ profileDir, baseUrl, headless = true }) {
+  const context = await chromium.launchPersistentContext(profileDir, {
+    channel: "chrome",
+    headless,
+    viewport: { width: 1280, height: 800 },
+    locale: "zh-CN",
+  });
+  const page = context.pages()[0] ?? (await context.newPage());
+
+  try {
+    await gotoWithRetry(page, `${baseUrl}/console`, 60_000);
+    return await readAccountBalance(page);
   } finally {
     await context.close();
   }

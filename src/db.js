@@ -36,6 +36,17 @@ export class CheckinDatabase {
         details_json TEXT,
         FOREIGN KEY(run_id) REFERENCES runs(id)
       );
+      CREATE TABLE IF NOT EXISTS account_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        balance REAL NOT NULL,
+        used REAL NOT NULL,
+        request_count INTEGER NOT NULL,
+        quota_per_unit REAL NOT NULL,
+        currency TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_account_snapshots_captured_at
+        ON account_snapshots(captured_at DESC);
     `);
   }
 
@@ -80,6 +91,44 @@ export class CheckinDatabase {
          FROM runs ORDER BY id DESC LIMIT ?`,
       )
       .all(limit);
+  }
+
+  saveAccountSnapshot(snapshot) {
+    const capturedAt = snapshot.updatedAt || snapshot.capturedAt || new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `INSERT INTO account_snapshots(
+          captured_at, balance, used, request_count, quota_per_unit, currency
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        capturedAt,
+        Number(snapshot.balance || 0),
+        Number(snapshot.used || 0),
+        Number(snapshot.requestCount || 0),
+        Number(snapshot.quotaPerUnit || 500000),
+        snapshot.currency || "",
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  latestAccountSnapshot() {
+    const row = this.db
+      .prepare(
+        `SELECT captured_at, balance, used, request_count, quota_per_unit, currency
+         FROM account_snapshots ORDER BY id DESC LIMIT 1`,
+      )
+      .get();
+    if (!row) return null;
+    return {
+      capturedAt: row.captured_at,
+      updatedAt: row.captured_at,
+      balance: row.balance,
+      used: row.used,
+      requestCount: row.request_count,
+      quotaPerUnit: row.quota_per_unit,
+      currency: row.currency,
+    };
   }
 
   close() {

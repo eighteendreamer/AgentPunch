@@ -5,8 +5,9 @@ import readline from "node:readline/promises";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
 import { chromium } from "patchright";
-import { AuthRequiredError, interactiveSetup, runCheckin } from "./checkin.js";
+import { AuthRequiredError, getAccountBalance, interactiveSetup, runCheckin } from "./checkin.js";
 import { CheckinDatabase } from "./db.js";
+import { exportMigrationPackage, importMigrationPackage } from "./backup.js";
 
 const baseUrl = (process.env.AGENT_ROUTER_BASE_URL || "https://ps.air-outer.com").replace(/\/$/, "");
 const dataDir = process.env.AGENT_ROUTER_DATA_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), "AgentRouterCheckin");
@@ -67,6 +68,7 @@ async function run() {
       headless: process.env.AGENT_ROUTER_HEADLESS !== "false",
       log,
     });
+    if (result.balance) db.saveAccountSnapshot(result.balance);
     const message = result.checkedIn ? "签到成功，新增额度已到账" : "登录成功，但站点未返回 checked_in=true";
     db.finishRun(runId, { status: "success", checkedIn: result.checkedIn, message, details: result });
     log("info", "complete", message, result);
@@ -81,6 +83,64 @@ async function run() {
     process.exitCode = status === "auth_required" ? 2 : 1;
   } finally {
     db.close();
+    releaseLock(lock);
+  }
+}
+
+async function balance() {
+  const lock = acquireLock();
+  const db = new CheckinDatabase(dbFile);
+  try {
+    const snapshot = await getAccountBalance({
+      profileDir,
+      baseUrl,
+      headless: process.env.AGENT_ROUTER_HEADLESS !== "false",
+    });
+    db.saveAccountSnapshot(snapshot);
+    console.log(JSON.stringify({
+      balance: snapshot.balance,
+      used: snapshot.used,
+      requestCount: snapshot.requestCount,
+      currency: snapshot.currency,
+      updatedAt: snapshot.updatedAt,
+    }));
+  } catch (error) {
+    console.error(error instanceof AuthRequiredError ? "需要重新绑定 GitHub 账号" : "余额更新失败");
+    process.exitCode = error instanceof AuthRequiredError ? 2 : 1;
+  } finally {
+    db.close();
+    releaseLock(lock);
+  }
+}
+
+async function readPassword() {
+  let value = "";
+  for await (const chunk of process.stdin) value += chunk;
+  return value.replace(/\r?\n$/, "");
+}
+
+async function migration(mode, filename) {
+  if (!filename) throw new Error("缺少迁移包文件路径");
+  const lock = acquireLock();
+  try {
+    const password = await readPassword();
+    const settings = (() => {
+      try { return JSON.parse(fs.readFileSync(path.join(dataDir, "settings.json"), "utf8")); }
+      catch { return {}; }
+    })();
+    const operation = mode === "export" ? exportMigrationPackage : importMigrationPackage;
+    const result = await operation({
+      dataDir,
+      profileDir,
+      [mode === "export" ? "outputFile" : "inputFile"]: path.resolve(filename),
+      password,
+      headless: settings.headless !== false,
+    });
+    console.log(JSON.stringify(result));
+  } catch (error) {
+    console.error(error.message || "迁移操作失败");
+    process.exitCode = 1;
+  } finally {
     releaseLock(lock);
   }
 }
@@ -117,7 +177,10 @@ const command = process.argv[2] || "run";
 if (command === "run") await run();
 else if (command === "setup") await setup();
 else if (command === "doctor") await doctor();
+else if (command === "balance") await balance();
+else if (command === "backup-export") await migration("export", process.argv[3]);
+else if (command === "backup-import") await migration("import", process.argv[3]);
 else {
-  console.error("用法：node src/cli.js <setup|run|doctor>");
+  console.error("用法：node src/cli.js <setup|run|balance|backup-export|backup-import|doctor>");
   process.exitCode = 64;
 }

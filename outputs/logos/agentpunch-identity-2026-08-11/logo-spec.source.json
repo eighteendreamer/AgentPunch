@@ -1,0 +1,98 @@
+{
+  "meta": {
+    "title": "AgentPunch 标志探索",
+    "stage": "Logo exploration",
+    "brand_name": "AgentPunch",
+    "anchor": "AgentPunch：本地安全运行的自动签到桌面工具",
+    "summary": "为一个负责、轻量、可信的 Windows 自动签到工具探索可用于窗口图标、侧边栏和网站页眉的标志方向。",
+    "run_id": "agentpunch-identity-2026-08-11"
+  },
+  "constraints": {
+    "preserve": ["产品名准确拼写：AgentPunch", "当前品牌蓝 #2563EB 与深蓝文字气质", "自动执行、签到完成、本地安全、可靠可视化", "窗口标题栏和 30px 侧边栏图标中的小尺寸识别度", "图形与 AgentPunch wordmark 可独立使用"],
+    "avoid": ["GitHub 官方 Logo 或其他合作方 Logo", "拳头、攻击、暴力、警报等攻击性字面图形", "复杂渐变、细线、难以缩小的细节", "密码、Cookie、2FA 或真实账号信息", "Tagline、虚假认证徽章、版权或商标符号"]
+  },
+  "routes": [
+    {
+      "id": "verified-pulse",
+      "label": "Verified Pulse",
+      "family": "symbol / utility",
+      "usage_contexts": ["窗口图标", "侧边栏", "favicon"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a local desktop utility that automatically completes a daily check-in. Explore a compact rounded-square blue mark where a confident checkmark is integrated with a subtle pulse or forward-motion gesture, communicating reliable completion without aggression. Show the symbol alone at large scale and a small adjacent AgentPunch wordmark lockup as a secondary example. Use #2563EB blue, deep navy, and white, flat vector-like geometry, bold silhouette, excellent 16px recognition. Exact wordmark spelling AgentPunch only, no tagline, no GitHub mark, no mockup, no extra text.",
+      "rationale": "保留当前用户已经熟悉的勾选语义，同时增加自动运行的节奏感。",
+      "best_for": "最适合作为窗口图标、侧边栏品牌标记和 favicon。",
+      "decision_advice": "如果希望升级现有勾选图标、降低迁移成本，这条是最稳妥的主方向。",
+      "watch_out": "需要避免变成普通待办软件勾选图标。",
+      "next_step": "选择后做 16px、24px、32px 与单色版本的矢量精修。",
+      "final_owner": "external-production-identity"
+    },
+    {
+      "id": "agent-node",
+      "label": "Agent Node",
+      "family": "tech / geometric",
+      "usage_contexts": ["桌面应用图标", "设置页", "开发者文档"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a local Windows desktop automation tool. Explore a compact geometric agent-node symbol: a central blue check node connected to two or three calm orbital nodes, suggesting an agent coordinating a scheduled workflow. Keep the mark simple, rounded, flat, and readable at 16px. Use #2563EB, deep navy, and white. Show symbol alone plus a small adjacent AgentPunch wordmark lockup. Exact wordmark spelling AgentPunch only, no tagline, no GitHub mark, no extra text, no 3D, no mockup.",
+      "rationale": "把 Agent 的调度与本地自动化能力转成系统化图形。",
+      "best_for": "适合强调自动化能力和桌面工具属性。",
+      "decision_advice": "如果产品未来会扩展更多自动化任务，这条更有系统品牌延展性。",
+      "watch_out": "节点过多会降低窗口标题栏中的辨识度。",
+      "next_step": "选择后限制为 3 个节点并建立响应式图标规则。",
+      "final_owner": "external-production-identity"
+    },
+    {
+      "id": "punch-window",
+      "label": "Punch Window",
+      "family": "monogram / utility",
+      "usage_contexts": ["窗口图标", "桌面快捷方式", "品牌印章"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a reliable local desktop check-in utility. Explore an abstract AP monogram built from two interlocking rounded vertical strokes inside a soft blue window frame, with the inner negative space implying a completed check or a punch-through action, never a fist or violence. Use #2563EB, deep navy, and white, bold flat vector-like geometry, strong square silhouette, readable at 16px. Show symbol alone and a small adjacent AgentPunch wordmark. Exact spelling AgentPunch only, no tagline, no GitHub mark, no extra text, no mockup.",
+      "rationale": "利用 AP 首字母做更专属的品牌资产，并暗示桌面窗口。",
+      "best_for": "适合作为快捷方式、任务栏和迁移包文件图标。",
+      "decision_advice": "如果希望图标不依赖签到勾选这一单一语义，可以优先考虑。",
+      "watch_out": "AP 结构必须保持清晰，不能像随机几何字母。",
+      "next_step": "选择后做字母结构的网格化和小尺寸测试。",
+      "final_owner": "external-production-identity"
+    },
+    {
+      "id": "secure-loop",
+      "label": "Secure Loop",
+      "family": "symbol / adaptive",
+      "usage_contexts": ["桌面应用", "状态页", "数据迁移"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a local-first desktop utility that runs a daily check-in. Explore a rounded continuous loop that resolves into a check at one point, with a small protected inner space suggesting local safety and persistence. The loop must feel calm and dependable, not like a padlock or shield icon. Use #2563EB, deep navy, and white, minimal flat vector-like geometry, bold enough for a 16px app icon. Show symbol alone plus a small AgentPunch wordmark lockup. Exact wordmark spelling AgentPunch only, no tagline, no GitHub mark, no extra text, no mockup.",
+      "rationale": "对应每天重复执行、会话维护和数据只在本机保存。",
+      "best_for": "适合产品状态页、数据迁移和本地安全叙事。",
+      "decision_advice": "如果产品希望更突出持续可靠而不是动作本身，这条更合适。",
+      "watch_out": "循环容易接近同步或刷新类通用图标。",
+      "next_step": "选择后强化唯一的断点勾形，并测试旋转与静态两个状态。",
+      "final_owner": "external-production-identity"
+    },
+    {
+      "id": "calendar-check",
+      "label": "Calendar Check",
+      "family": "category metaphor / utility",
+      "usage_contexts": ["首页", "桌面图标", "帮助文档"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a desktop app for automatic daily check-in. Explore a highly simplified calendar tab combined with a bold completion check, reduced to two or three geometric shapes so it stays recognizable at 16px. Avoid literal detailed calendars or text. Use #2563EB, deep navy, and white, flat vector-like geometry, confident rounded corners. Show the symbol alone and a small adjacent AgentPunch wordmark lockup. Exact wordmark spelling AgentPunch only, no tagline, no GitHub mark, no extra text, no mockup.",
+      "rationale": "直接连接每日签到和任务计划，用户一眼能理解产品用途。",
+      "best_for": "适合新用户理解和功能入口识别。",
+      "decision_advice": "如果优先考虑品类直觉和低学习成本，这条最清楚。",
+      "watch_out": "日历加勾选容易与日历、打卡、待办产品同质化。",
+      "next_step": "选择后抽象掉日期细节，建立更独特的顶部折角。",
+      "final_owner": "external-production-identity"
+    },
+    {
+      "id": "quiet-strike",
+      "label": "Quiet Strike",
+      "family": "wordmark / motion",
+      "usage_contexts": ["产品页眉", "启动页", "宣传材料"],
+      "prompt": "Create one clean logo exploration tile on a pure white inspection background for AgentPunch, a calm and reliable local automation desktop app. Explore a restrained wordmark-led identity where the capital A and P share a precise forward notch or one-time stroke, paired with a small compact blue completion mark. The feeling should be quiet confidence and punctual execution, not sports, combat, or aggression. Use #2563EB and deep navy, clean sans-serif lettering, flat vector-like presentation. Show the exact wordmark AgentPunch only, no tagline, no GitHub mark, no extra text, no mockup.",
+      "rationale": "让品牌名本身成为主识别，减少图标类产品的同质化。",
+      "best_for": "适合产品页眉、启动页和文档中的品牌露出。",
+      "decision_advice": "如果希望 AgentPunch 作为产品名被记住，而不是只记住一个图标，可选这条。",
+      "watch_out": "字标需要定制化，否则会退化成普通字体排版。",
+      "next_step": "选择后进行字标字距、A/P 结构和小尺寸横向锁定组合的矢量制作。",
+      "final_owner": "external-production-identity"
+    }
+  ],
+  "handoff": {
+    "default_owner": "external-production-identity",
+    "next_prompt_hints": ["保留选中方向的核心轮廓，不叠加 GitHub 或第三方品牌符号", "优先完成窗口图标、侧边栏图标和单色打印三个版本", "进行商标近似检索与人工矢量精修"]
+  }
+}

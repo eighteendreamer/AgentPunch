@@ -21,3 +21,30 @@ test("successful daily run is idempotent", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("latest account snapshot is available without a network request", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-router-balance-"));
+  const db = new CheckinDatabase(path.join(dir, "test.sqlite3"));
+  try {
+    db.saveAccountSnapshot({
+      balance: 49.8,
+      used: 1450.2,
+      requestCount: 2312,
+      quotaPerUnit: 500000,
+      currency: "$",
+      updatedAt: "2026-08-11T01:00:00.000Z",
+    });
+    assert.deepEqual(db.latestAccountSnapshot(), {
+      capturedAt: "2026-08-11T01:00:00.000Z",
+      updatedAt: "2026-08-11T01:00:00.000Z",
+      balance: 49.8,
+      used: 1450.2,
+      requestCount: 2312,
+      quotaPerUnit: 500000,
+      currency: "$",
+    });
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
