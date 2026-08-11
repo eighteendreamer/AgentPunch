@@ -16,6 +16,7 @@
     "task-status": "node scripts/task.js status",
     "desktop:dev": "npm --prefix apps/desktop run dev",
     "desktop:start": "npm --prefix apps/desktop run start",
+    "desktop:dist": "npm --prefix apps/desktop run dist",
     "test": "node --disable-warning=ExperimentalWarning --test"
   },
   "dependencies": {

@@ -33,8 +33,8 @@ function nextDailyRun(dailyTime, now = new Date()) {
   return next;
 }
 
-function taskXml({ projectRoot, dailyTime }) {
-  const node = findNodeExecutable();
+function taskXml({ projectRoot, dailyTime, appExecutable = null }) {
+  const node = appExecutable || findNodeExecutable();
   const script = path.join(projectRoot, "src", "cli.js");
   const user = `${process.env.USERDOMAIN || os.hostname()}\\${process.env.USERNAME || os.userInfo().username}`;
   const boundary = new Date();
@@ -69,7 +69,7 @@ function taskXml({ projectRoot, dailyTime }) {
   <Actions Context="Author">
     <Exec>
       <Command>${escapeXml(node)}</Command>
-      <Arguments>--disable-warning=ExperimentalWarning &quot;${escapeXml(script)}&quot; run</Arguments>
+      <Arguments>${appExecutable ? "--background-checkin" : `--disable-warning=ExperimentalWarning &quot;${escapeXml(script)}&quot; run`}</Arguments>
       <WorkingDirectory>${escapeXml(projectRoot)}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -95,10 +95,10 @@ export async function getWindowsTaskStatus({ taskName, dailyTime }) {
   }
 }
 
-export async function installWindowsTask({ taskName, projectRoot, dailyTime, dataDir }) {
+export async function installWindowsTask({ taskName, projectRoot, dailyTime, dataDir, appExecutable = null }) {
   fs.mkdirSync(dataDir, { recursive: true });
   const xmlFile = path.join(dataDir, `${taskName}.xml`);
-  fs.writeFileSync(xmlFile, taskXml({ projectRoot, dailyTime }), "utf8");
+  fs.writeFileSync(xmlFile, taskXml({ projectRoot, dailyTime, appExecutable }), "utf8");
   try {
     await execFileAsync("schtasks.exe", ["/Create", "/TN", taskName, "/XML", xmlFile, "/F"], {
       windowsHide: true,

@@ -3,3 +3,5 @@ node_modules/
 .env
 data/
 apps/desktop/dist/
+apps/desktop/release/
+apps/desktop/release-package/

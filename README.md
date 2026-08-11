@@ -48,6 +48,8 @@ npm run install-task
 
 `npm run setup` 会打开一个独立 Chrome 窗口。首次在其中手动登录 GitHub 并完成 2FA，之后脚本复用这个浏览器配置。
 
+桌面端“切换账号”会使用全新的临时 Chrome 配置登录并验证新账号。新账号完成 GitHub 登录和 AgentRouter OAuth 后才会替换现有配置；关闭窗口、登录超时或验证失败都不会破坏原账号登录状态。
+
 计划任务包含两个触发器：用户登录时、每天 09:00。SQLite 幂等检查保证当天成功后再次触发会直接跳过。
 
 计划任务由 Node.js 生成 Windows Task Scheduler XML，并通过系统自带的 `schtasks.exe` 管理，不依赖 PowerShell。命令行自定义时间可使用 `npm run install-task -- 10:30`，桌面端也可以直接在设置页修改。

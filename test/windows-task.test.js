@@ -16,3 +16,14 @@ test("scheduled task XML contains both logon and daily triggers", () => {
   assert.match(xml, /T09:30:00/);
   assert.match(xml, /<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
 });
+
+test("packaged scheduled task starts the installed application", () => {
+  const xml = taskInternals.taskXml({
+    projectRoot: "C:\\Program Files\\AgentPunch\\resources\\agentpunch-runtime",
+    dailyTime: "09:30",
+    appExecutable: "C:\\Program Files\\AgentPunch\\AgentPunch.exe",
+  });
+  assert.match(xml, /AgentPunch\.exe/);
+  assert.match(xml, /<Arguments>--background-checkin<\/Arguments>/);
+  assert.doesNotMatch(xml, /src\\cli\.js.*run/);
+});

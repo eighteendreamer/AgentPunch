@@ -3,16 +3,21 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { CheckinDatabase } from "../../../src/db.js";
-import { getWindowsTaskStatus, installWindowsTask, uninstallWindowsTask } from "../../../src/windows-task.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, "..");
-const projectRoot = path.resolve(desktopRoot, "..", "..");
+const projectRoot = app.isPackaged
+  ? path.join(process.resourcesPath, "agentpunch-runtime")
+  : path.resolve(desktopRoot, "..", "..");
+const { CheckinDatabase } = await import(pathToFileURL(path.join(projectRoot, "src", "db.js")).href);
+const { getWindowsTaskStatus, installWindowsTask, uninstallWindowsTask } = await import(
+  pathToFileURL(path.join(projectRoot, "src", "windows-task.js")).href,
+);
 const dataDir = process.env.AGENT_ROUTER_DATA_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), "AgentRouterCheckin");
 const dbFile = path.join(dataDir, "checkin.sqlite3");
 const settingsFile = path.join(dataDir, "settings.json");
+const accountFile = path.join(dataDir, "account.json");
 const taskName = "AgentRouterDailyCheckin";
 let balanceRefreshPromise = null;
 const screenshotOutput =
@@ -42,6 +47,11 @@ function writeSettings(settings) {
   return next;
 }
 
+function readAccount() {
+  try { return JSON.parse(fs.readFileSync(accountFile, "utf8")); }
+  catch { return null; }
+}
+
 async function taskStatus() {
   const settings = readSettings();
   const result = await getWindowsTaskStatus({ taskName, dailyTime: settings.dailyTime });
@@ -49,17 +59,24 @@ async function taskStatus() {
   return result;
 }
 
-function runNodeCli(args, env = {}, input = null) {
+function runNodeCli(args, env = {}, input = null, onOutput = null) {
   return new Promise((resolve) => {
-    const child = spawn("node", ["--disable-warning=ExperimentalWarning", path.join(projectRoot, "src", "cli.js"), ...args], {
+    const executable = app.isPackaged ? process.execPath : "node";
+    const child = spawn(executable, ["--disable-warning=ExperimentalWarning", path.join(projectRoot, "src", "cli.js"), ...args], {
       cwd: projectRoot,
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: "1" } : {}), ...env },
       windowsHide: true,
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => (stdout += chunk));
-    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      onOutput?.(String(chunk));
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      onOutput?.(String(chunk));
+    });
     child.on("close", (code) => resolve({ ok: code === 0, code, output: `${stdout}\n${stderr}`.trim() }));
     child.on("error", (error) => resolve({ ok: false, code: -1, output: error.message }));
     if (input == null) child.stdin.end();
@@ -73,6 +90,24 @@ function migrationError(output) {
   if (output?.includes("至少需要 8 个字符")) return "迁移密码至少需要 8 个字符";
   if (output?.includes("没有找到有效的 GitHub")) return "没有找到有效的 GitHub 登录状态，请先重新绑定";
   return "迁移操作失败，请检查迁移包后重试";
+}
+
+function setupError(output) {
+  if (output?.includes("已有账号切换流程")) return "已有账号切换流程正在运行";
+  if (output?.includes("等待签到或余额任务结束超时")) return "当前签到或余额任务长时间未结束，请稍后重试";
+  if (output?.includes("Timeout") || output?.includes("timeout")) return "等待 GitHub 登录超时，请重新绑定";
+  if (output?.includes("Target page") || output?.includes("closed")) return "绑定窗口已关闭，GitHub 登录尚未完成";
+  if (output?.includes("登录未完成") || output?.includes("登录态已失效")) return "GitHub 登录尚未完成，请重新绑定";
+  return "GitHub 绑定失败，请检查 Chrome 是否可以正常打开";
+}
+
+function setupProgressMessage(output) {
+  if (output.includes("全新的 Chrome")) return "Chrome 已打开，请登录新的 GitHub 账号并完成 2FA";
+  if (output.includes("已检测到 GitHub 登录")) return "已检测到 GitHub 登录，正在关闭登录窗口";
+  if (output.includes("等待当前后台任务")) return "GitHub 已登录，正在等待后台任务结束";
+  if (output.includes("验证 AgentRouter OAuth") || output.includes("oauth_start")) return "GitHub 已登录，正在验证 AgentRouter OAuth";
+  if (output.includes("账号切换完成")) return "新账号验证完成";
+  return null;
 }
 
 async function getStatus() {
@@ -93,6 +128,7 @@ async function getStatus() {
       nextRunTime: settings.taskNextRunTime,
     },
     balance,
+    account: readAccount(),
     settings,
     dataDir,
   };
@@ -101,7 +137,13 @@ async function getStatus() {
 async function setTaskEnabled(enabled) {
   const settings = readSettings();
   if (enabled) {
-    await installWindowsTask({ taskName, projectRoot, dailyTime: settings.dailyTime, dataDir });
+    await installWindowsTask({
+      taskName,
+      projectRoot,
+      dailyTime: settings.dailyTime,
+      dataDir,
+      appExecutable: app.isPackaged ? process.execPath : null,
+    });
   } else {
     await uninstallWindowsTask({ taskName });
   }
@@ -178,15 +220,14 @@ ipcMain.handle("agent:save-settings", async (_event, settings) => {
   if (next.taskEnabled) await setTaskEnabled(true);
   return next;
 });
-ipcMain.handle("agent:start-setup", async () => {
-  const child = spawn("cmd.exe", ["/K", "npm run setup"], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: "ignore",
-    windowsHide: false,
+ipcMain.handle("agent:start-setup", async (event) => {
+  const result = await runNodeCli(["setup-auto"], {
+    AGENT_ROUTER_HEADLESS: "false",
+  }, null, (output) => {
+    const message = setupProgressMessage(output);
+    if (message && !event.sender.isDestroyed()) event.sender.send("agent:setup-progress", { message });
   });
-  child.unref();
-  return { ok: true };
+  return result.ok ? { ok: true } : { ok: false, error: setupError(result.output) };
 });
 ipcMain.handle("agent:open-data-folder", async () => {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -215,6 +256,12 @@ ipcMain.handle("agent:import-data", async (_event, { password }) => {
 });
 
 app.whenReady().then(() => {
+  if (process.argv.includes("--background-checkin")) {
+    runNodeCli(["run"]).then((result) => {
+      if (!result.ok) process.exitCode = result.code || 1;
+    }).finally(() => app.quit());
+    return;
+  }
   createWindow();
   app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });

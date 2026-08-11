@@ -109,11 +109,13 @@ export async function exportMigrationPackage({ dataDir, profileDir, outputFile, 
   }
 
   const settingsFile = path.join(dataDir, "settings.json");
+  const accountFile = path.join(dataDir, "account.json");
   const dbFile = path.join(dataDir, "checkin.sqlite3");
   const payload = {
     version: VERSION,
     createdAt: new Date().toISOString(),
     settings: readJson(settingsFile),
+    account: readJson(accountFile, null),
     database: snapshotDatabase(dbFile),
     github: { cookies },
   };
@@ -149,6 +151,7 @@ export async function importMigrationPackage({ dataDir, profileDir, inputFile, p
   }
 
   const settingsFile = path.join(dataDir, "settings.json");
+  const accountFile = path.join(dataDir, "account.json");
   const dbFile = path.join(dataDir, "checkin.sqlite3");
   if (payload.database) {
     const currentDatabase = snapshotDatabase(dbFile);
@@ -163,6 +166,7 @@ export async function importMigrationPackage({ dataDir, profileDir, inputFile, p
     taskEnabled: false,
     taskNextRunTime: null,
   }, null, 2));
+  if (payload.account) fs.writeFileSync(accountFile, JSON.stringify(payload.account, null, 2));
 
   return {
     cookieCount: payload.github.cookies.length,

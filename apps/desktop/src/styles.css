@@ -87,6 +87,7 @@ nav { display: grid; gap: 4px; }
 .context-rows small { color: var(--muted); font-size: 11px; }
 .context-rows strong { color: #263147; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 215px; }
 .text-button { margin-left: auto; border: 0; background: none; color: var(--accent); font-size: 12px; cursor: pointer; }
+.text-button:disabled { color: var(--muted); cursor: wait; }
 .privacy-note { display: flex; align-items: flex-start; gap: 9px; margin-top: 20px; color: #718096; }
 .privacy-note p { margin: 0; font-size: 12px; line-height: 1.5; }
 .toggle { width: 42px; height: 23px; padding: 2px; border: 0; border-radius: 999px; background: #c8ced8; cursor: pointer; transition: .18s ease; }
