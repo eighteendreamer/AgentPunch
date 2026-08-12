@@ -54,8 +54,33 @@ function readAccount() {
 
 async function taskStatus() {
   const settings = readSettings();
-  const result = await getWindowsTaskStatus({ taskName, dailyTime: settings.dailyTime });
-  writeSettings({ taskEnabled: result.installed, taskNextRunTime: result.nextRunTime || null });
+  let result = await getWindowsTaskStatus({
+    taskName,
+    dailyTime: settings.dailyTime,
+    expectedAppExecutable: app.isPackaged ? process.execPath : null,
+  });
+  if (app.isPackaged && result.installed && result.needsMigration) {
+    const migratedDailyTime = result.configuredDailyTime || settings.dailyTime;
+    await installWindowsTask({
+      taskName,
+      projectRoot,
+      dailyTime: migratedDailyTime,
+      dataDir,
+      appExecutable: process.execPath,
+    });
+    result = await getWindowsTaskStatus({
+      taskName,
+      dailyTime: migratedDailyTime,
+      expectedAppExecutable: process.execPath,
+    });
+    result.migratedFromLegacy = true;
+    result.migratedDailyTime = migratedDailyTime;
+  }
+  writeSettings({
+    taskEnabled: result.installed,
+    taskNextRunTime: result.nextRunTime || null,
+    ...(result.migratedDailyTime ? { dailyTime: result.migratedDailyTime } : {}),
+  });
   return result;
 }
 
@@ -131,6 +156,7 @@ async function getStatus() {
     account: readAccount(),
     settings,
     dataDir,
+    appVersion: app.getVersion(),
   };
 }
 

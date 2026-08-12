@@ -1,6 +1,6 @@
 {
   "name": "agentpunch-desktop",
-  "version": "1.0.4",
+  "version": "1.0.10",
   "private": true,
   "type": "module",
   "description": "AgentPunch 自动签到桌面客户端",
@@ -55,7 +55,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AgentPunch"
+      "shortcutName": "AgentPunch",
+      "include": "build/installer.nsh"
     }
   }
 }

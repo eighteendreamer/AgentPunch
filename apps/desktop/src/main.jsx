@@ -83,7 +83,7 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
           <div className="balance-summary">
             <span>当前余额</span>
             <strong>{balance?.ok ? `${balance.data.currency}${balance.data.balance.toFixed(2)}` : "—"}</strong>
-            <small>{balance?.ok ? `历史消耗 ${balance.data.currency}${balance.data.used.toFixed(2)}${balanceBusy ? " · 更新中" : ""}` : balanceBusy ? "正在后台更新余额" : balance?.error || "登录后可读取"}</small>
+            <small>{balance?.ok ? `历史消耗 ${balance.data.currency}${balance.data.used.toFixed(2)}${balanceBusy ? " · 更新中" : ""}` : balanceBusy ? "正在后台获取余额" : balance?.error || (status?.initialized ? "余额尚未获取" : "绑定账号后可读取")}</small>
           </div>
           {!success && <button className="primary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}{setupBusy ? "账号切换中" : "立即签到"}</button>}
         </div>
@@ -154,7 +154,10 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
           </div>
         </div>
       </section>
-      <div className="settings-security"><ShieldCheck size={16} /><span>密码、Cookie 与 2FA 密钥不会写入配置或数据库。</span></div>
+      <div className="settings-footer">
+        <div className="settings-security"><ShieldCheck size={16} /><span>密码、Cookie 与 2FA 密钥不会写入配置或数据库。</span></div>
+        <span className="app-version">AgentPunch v{status?.appVersion || "—"}</span>
+      </div>
     </main>
   );
 }
@@ -202,7 +205,7 @@ function App() {
       if (result.ok) setBalance(result);
       else setBalance((current) => current?.ok ? current : { ok: false, error: result.error || "余额暂时无法更新" });
       if (showToast) notify(result.ok ? "余额已更新" : result.error || "余额暂时无法更新", result.ok ? "ok" : "error");
-    } catch {
+    } catch (error) {
       setBalance((current) => current?.ok ? current : { ok: false, error: "余额暂时无法更新" });
       if (showToast) notify("余额暂时无法更新", "error");
     } finally {
@@ -219,8 +222,13 @@ function App() {
         if (next.balance) setBalance({ ok: true, data: next.balance });
 
         api.getTaskStatus().then((task) => {
-          if (active) setStatus((current) => current ? { ...current, task } : current);
+          if (active) {
+            setStatus((current) => current ? { ...current, task } : current);
+            if (task.migratedFromLegacy) notify("已将旧版自动任务升级为隐藏运行模式");
+          }
         }).catch(() => {});
+
+        if (next.initialized && !next.balance) refreshBalance(false);
 
       } catch {
         if (active) notify("本地状态读取失败", "error");
@@ -252,13 +260,13 @@ function App() {
       const task = await api.setTaskEnabled(enabled);
       setStatus((current) => current ? { ...current, task, settings: { ...current.settings, taskEnabled: task.installed } } : current);
       notify(enabled ? "自动签到已开启" : "自动签到已关闭");
-    } catch {
+    } catch (error) {
       setStatus((current) => current ? {
         ...current,
         task: { ...current.task, installed: previous },
         settings: { ...current.settings, taskEnabled: previous },
       } : current);
-      notify("自动任务修改失败，请稍后重试", "error");
+      notify(error?.message ? `自动任务修改失败：${error.message.replace(/^Error invoking remote method '[^']+':\s*/, "")}` : "自动任务修改失败，请稍后重试", "error");
     }
   }
   async function saveSettings(settings) { await api.saveSettings(settings); notify("设置已保存"); await refresh(); }

@@ -50,6 +50,16 @@ npm run install-task
 
 桌面端“切换账号”会使用全新的临时 Chrome 配置登录并验证新账号。新账号完成 GitHub 登录和 AgentRouter OAuth 后才会替换现有配置；关闭窗口、登录超时或验证失败都不会破坏原账号登录状态。
 
+安装版启动时会检查现有 Windows 自动任务。如果发现任务仍指向源码目录、`node.exe` 或 PowerShell，会保留原执行时间并自动迁移为隐藏运行的 `AgentPunch.exe --background-checkin`，避免签到时弹出终端窗口。
+
+## 卸载与本地数据
+
+通过 Windows“已安装的应用”卸载 AgentPunch 时，卸载程序始终删除 `AgentRouterDailyCheckin` 自动执行任务，确保卸载后不再运行每日签到。
+
+本地数据保存在 `%LOCALAPPDATA%\AgentRouterCheckin`，包含独立 Chrome 登录配置、SQLite 签到历史和余额快照、设置、日志、账号元数据以及迁移前备份。卸载时会弹出确认框询问是否同时删除本地账号与历史数据，默认选择“否”；选择“是”后彻底删除。删除不可恢复，如需换机或保留账号，请先在设置页导出加密迁移包。
+
+安装器更新缓存位于 `%LOCALAPPDATA%\agentpunch-desktop-updater`，不属于用户账号数据，正常卸载时始终删除。
+
 计划任务包含两个触发器：用户登录时、每天 09:00。SQLite 幂等检查保证当天成功后再次触发会直接跳过。
 
 计划任务由 Node.js 生成 Windows Task Scheduler XML，并通过系统自带的 `schtasks.exe` 管理，不依赖 PowerShell。命令行自定义时间可使用 `npm run install-task -- 10:30`，桌面端也可以直接在设置页修改。

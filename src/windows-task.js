@@ -33,6 +33,44 @@ function nextDailyRun(dailyTime, now = new Date()) {
   return next;
 }
 
+function decodeXml(value = "") {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&amp;", "&");
+}
+
+function tagValue(xml, tag) {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match ? decodeXml(match[1].trim()) : null;
+}
+
+function inspectTaskXml(xml, expectedAppExecutable = null) {
+  const command = tagValue(xml, "Command");
+  const argumentsText = tagValue(xml, "Arguments") || "";
+  const normalizedCommand = command ? path.resolve(command).toLowerCase() : "";
+  const normalizedExpected = expectedAppExecutable ? path.resolve(expectedAppExecutable).toLowerCase() : "";
+  const isInstalledAppTask = Boolean(
+    normalizedExpected && normalizedCommand === normalizedExpected && argumentsText.includes("--background-checkin"),
+  );
+  const isLegacySourceTask = Boolean(
+    /(?:^|\\|\/)node\.exe$/i.test(command || "") ||
+    /src[\\/]cli\.js/i.test(argumentsText) ||
+    /powershell/i.test(command || ""),
+  );
+  const startBoundary = tagValue(xml, "StartBoundary");
+  const configuredDailyTime = startBoundary?.match(/T(\d{2}:\d{2})/)?.[1] || null;
+  return {
+    command,
+    arguments: argumentsText,
+    taskSource: isInstalledAppTask ? "installed" : isLegacySourceTask ? "legacy-source" : "other",
+    needsMigration: Boolean(expectedAppExecutable && !isInstalledAppTask),
+    configuredDailyTime,
+  };
+}
+
 function taskXml({ projectRoot, dailyTime, appExecutable = null }) {
   const node = appExecutable || findNodeExecutable();
   const script = path.join(projectRoot, "src", "cli.js");
@@ -42,7 +80,7 @@ function taskXml({ projectRoot, dailyTime, appExecutable = null }) {
   boundary.setHours(hours, minutes, 0, 0);
   const localBoundary = `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, "0")}-${String(boundary.getDate()).padStart(2, "0")}T${dailyTime}:00`;
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Agent Router GitHub OAuth daily check-in. Runs at logon and the configured daily time.</Description>
@@ -76,19 +114,21 @@ function taskXml({ projectRoot, dailyTime, appExecutable = null }) {
 </Task>`;
 }
 
-export async function getWindowsTaskStatus({ taskName, dailyTime }) {
+export async function getWindowsTaskStatus({ taskName, dailyTime, expectedAppExecutable = null }) {
   try {
     const { stdout } = await execFileAsync("schtasks.exe", ["/Query", "/TN", taskName, "/XML"], {
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     });
     const enabled = !/<Enabled>\s*false\s*<\/Enabled>/i.test(stdout);
+    const inspection = inspectTaskXml(stdout, expectedAppExecutable);
     return {
       installed: true,
       state: enabled ? "Ready" : "Disabled",
       nextRunTime: enabled ? nextDailyRun(dailyTime).toISOString() : null,
       lastRunTime: null,
       lastTaskResult: null,
+      ...inspection,
     };
   } catch {
     return { installed: false, state: "NotInstalled", nextRunTime: null, lastRunTime: null, lastTaskResult: null };
@@ -98,7 +138,10 @@ export async function getWindowsTaskStatus({ taskName, dailyTime }) {
 export async function installWindowsTask({ taskName, projectRoot, dailyTime, dataDir, appExecutable = null }) {
   fs.mkdirSync(dataDir, { recursive: true });
   const xmlFile = path.join(dataDir, `${taskName}.xml`);
-  fs.writeFileSync(xmlFile, taskXml({ projectRoot, dailyTime, appExecutable }), "utf8");
+  // Task Scheduler on some localized Windows installations rejects UTF-8 task
+  // files with "XML format is incorrect / cannot switch encoding". Its native
+  // XML export format is UTF-16LE with a BOM, so write the import file likewise.
+  fs.writeFileSync(xmlFile, `\uFEFF${taskXml({ projectRoot, dailyTime, appExecutable })}`, "utf16le");
   try {
     await execFileAsync("schtasks.exe", ["/Create", "/TN", taskName, "/XML", xmlFile, "/F"], {
       windowsHide: true,
@@ -118,4 +161,4 @@ export async function uninstallWindowsTask({ taskName }) {
   }
 }
 
-export const taskInternals = { nextDailyRun, taskXml };
+export const taskInternals = { inspectTaskXml, nextDailyRun, taskXml };
