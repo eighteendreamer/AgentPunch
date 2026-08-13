@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("agentPunch", {
   getStatus: () => ipcRenderer.invoke("agent:get-status"),
   getTaskStatus: () => ipcRenderer.invoke("agent:get-task-status"),
+  getLogs: () => ipcRenderer.invoke("agent:get-logs"),
   refreshBalance: () => ipcRenderer.invoke("agent:refresh-balance"),
   runCheckin: (force = false) => ipcRenderer.invoke("agent:run-checkin", { force }),
   setTaskEnabled: (enabled) => ipcRenderer.invoke("agent:set-task-enabled", { enabled }),

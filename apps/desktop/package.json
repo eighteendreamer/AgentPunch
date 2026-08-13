@@ -1,6 +1,6 @@
 {
   "name": "agentpunch-desktop",
-  "version": "1.0.10",
+  "version": "1.0.13",
   "private": true,
   "type": "module",
   "description": "AgentPunch 自动签到桌面客户端",

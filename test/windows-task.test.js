@@ -56,3 +56,13 @@ test("legacy task migration preserves its configured daily time", () => {
   const xml = `<Task><Triggers><CalendarTrigger><StartBoundary>2026-08-12T10:30:00+08:00</StartBoundary></CalendarTrigger></Triggers><Actions><Exec><Command>node.exe</Command><Arguments>G:\\OldSource\\src\\cli.js run</Arguments></Exec></Actions></Task>`;
   assert.equal(taskInternals.inspectTaskXml(xml, "C:\\AgentPunch\\AgentPunch.exe").configuredDailyTime, "10:30");
 });
+
+test("task status calculations can use the trigger time read from task XML", () => {
+  const xml = `<Task><Triggers><CalendarTrigger><StartBoundary>2026-08-12T13:45:00</StartBoundary></CalendarTrigger></Triggers></Task>`;
+  const configured = taskInternals.inspectTaskXml(xml).configuredDailyTime;
+  assert.equal(configured, "13:45");
+  const now = new Date(2026, 7, 13, 10, 0, 0);
+  const next = taskInternals.nextDailyRun(configured, now);
+  assert.equal(next.getHours(), 13);
+  assert.equal(next.getMinutes(), 45);
+});

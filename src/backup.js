@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "patchright";
 import { DatabaseSync } from "node:sqlite";
+import { githubSessionFromCookies } from "./profile-binding.js";
 
 const FORMAT = "agentpunch-migration";
 const VERSION = 1;
@@ -88,7 +89,7 @@ function portableCookies(cookies) {
     }));
 }
 
-export async function exportMigrationPackage({ dataDir, profileDir, outputFile, password, headless = true }) {
+export async function exportMigrationPackage({ dataDir, profileDir, outputFile, password, headless = true, githubCookies = [] }) {
   requirePassword(password);
   if (!fs.existsSync(profileDir)) throw new Error("尚未绑定 GitHub，无法导出登录状态");
 
@@ -100,6 +101,7 @@ export async function exportMigrationPackage({ dataDir, profileDir, outputFile, 
   });
   let cookies;
   try {
+    if (githubCookies.length) await context.addCookies(portableCookies(githubCookies));
     cookies = portableCookies(await context.cookies("https://github.com"));
   } finally {
     await context.close();
@@ -143,9 +145,28 @@ export async function importMigrationPackage({ dataDir, profileDir, inputFile, p
     viewport: { width: 1280, height: 800 },
     locale: "zh-CN",
   });
+  let verifiedGithubCookies = [];
   try {
     await context.clearCookies({ domain: /(^|\.)github\.com$/i });
     await context.addCookies(portableCookies(payload.github.cookies));
+    const page = context.pages()[0] ?? (await context.newPage());
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await page.goto("https://github.com/", { waitUntil: "domcontentloaded", timeout: 60_000 });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1_500));
+      }
+    }
+    if (lastError) throw new Error("无法在线验证迁移包中的 GitHub 登录状态，请检查网络后重试");
+    const session = githubSessionFromCookies(await context.cookies("https://github.com"));
+    if (!session || page.url().startsWith("https://github.com/login")) {
+      throw new Error("迁移包中的 GitHub 登录状态已过期，请导入后重新绑定 GitHub 账号");
+    }
+    verifiedGithubCookies = portableCookies(await context.cookies("https://github.com"));
   } finally {
     await context.close();
   }
@@ -172,6 +193,8 @@ export async function importMigrationPackage({ dataDir, profileDir, inputFile, p
     cookieCount: payload.github.cookies.length,
     hasDatabase: Boolean(payload.database),
     createdAt: payload.createdAt || null,
+    githubUsername: payload.github.cookies.find((cookie) => cookie.name === "dotcom_user")?.value || payload.account?.githubUsername || null,
+    githubCookies: verifiedGithubCookies,
   };
 }
 

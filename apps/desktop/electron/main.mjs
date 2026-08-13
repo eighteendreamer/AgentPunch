@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, "..");
+const desktopPackage = JSON.parse(fs.readFileSync(path.join(desktopRoot, "package.json"), "utf8"));
 const projectRoot = app.isPackaged
   ? path.join(process.resourcesPath, "agentpunch-runtime")
   : path.resolve(desktopRoot, "..", "..");
@@ -18,6 +19,8 @@ const dataDir = process.env.AGENT_ROUTER_DATA_DIR || path.join(process.env.LOCAL
 const dbFile = path.join(dataDir, "checkin.sqlite3");
 const settingsFile = path.join(dataDir, "settings.json");
 const accountFile = path.join(dataDir, "account.json");
+const githubSessionFile = path.join(dataDir, "github-session.bin");
+const authStateFile = path.join(dataDir, "auth-state.json");
 const taskName = "AgentRouterDailyCheckin";
 let balanceRefreshPromise = null;
 const screenshotOutput =
@@ -52,6 +55,37 @@ function readAccount() {
   catch { return null; }
 }
 
+function readGithubSession() {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+    return JSON.parse(safeStorage.decryptString(fs.readFileSync(githubSessionFile)));
+  } catch {
+    return null;
+  }
+}
+
+function writeGithubSession(payload) {
+  if (!payload?.cookies?.length) return;
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows 安全存储当前不可用");
+  fs.mkdirSync(dataDir, { recursive: true });
+  const encrypted = safeStorage.encryptString(JSON.stringify(payload));
+  const temporary = `${githubSessionFile}.tmp`;
+  fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
+  fs.rmSync(githubSessionFile, { force: true });
+  fs.renameSync(temporary, githubSessionFile);
+  fs.writeFileSync(authStateFile, JSON.stringify({ valid: true, verifiedAt: new Date().toISOString() }), "utf8");
+}
+
+function readAuthState() {
+  try { return JSON.parse(fs.readFileSync(authStateFile, "utf8")); }
+  catch { return { valid: Boolean(readGithubSession()?.cookies?.length), verifiedAt: null }; }
+}
+
+function markAuthInvalid() {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(authStateFile, JSON.stringify({ valid: false, invalidatedAt: new Date().toISOString() }), "utf8");
+}
+
 async function taskStatus() {
   const settings = readSettings();
   let result = await getWindowsTaskStatus({
@@ -79,7 +113,7 @@ async function taskStatus() {
   writeSettings({
     taskEnabled: result.installed,
     taskNextRunTime: result.nextRunTime || null,
-    ...(result.migratedDailyTime ? { dailyTime: result.migratedDailyTime } : {}),
+    ...(result.configuredDailyTime ? { dailyTime: result.configuredDailyTime } : {}),
   });
   return result;
 }
@@ -91,6 +125,7 @@ function runNodeCli(args, env = {}, input = null, onOutput = null) {
       cwd: projectRoot,
       env: { ...process.env, ...(app.isPackaged ? { ELECTRON_RUN_AS_NODE: "1" } : {}), ...env },
       windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -102,7 +137,27 @@ function runNodeCli(args, env = {}, input = null, onOutput = null) {
       stderr += chunk;
       onOutput?.(String(chunk));
     });
-    child.on("close", (code) => resolve({ ok: code === 0, code, output: `${stdout}\n${stderr}`.trim() }));
+    let secretsBuffer = "";
+    child.stdio[4].setEncoding("utf8");
+    child.stdio[4].on("data", (chunk) => {
+      secretsBuffer += chunk;
+      let newline;
+      while ((newline = secretsBuffer.indexOf("\n")) >= 0) {
+        const line = secretsBuffer.slice(0, newline);
+        secretsBuffer = secretsBuffer.slice(newline + 1);
+        try {
+          const payload = JSON.parse(line);
+          if (payload?.type === "github-session") writeGithubSession(payload);
+        } catch {}
+      }
+    });
+    const savedSession = readGithubSession();
+    child.stdio[3].end(`${JSON.stringify({ type: "github-session", cookies: savedSession?.cookies || [] })}\n`);
+    child.on("close", (code) => {
+      const output = `${stdout}\n${stderr}`.trim();
+      if (code === 2 || output.includes("GitHub 登录态已失效") || output.includes("GitHub 登录状态不可用")) markAuthInvalid();
+      resolve({ ok: code === 0, code, output });
+    });
     child.on("error", (error) => resolve({ ok: false, code: -1, output: error.message }));
     if (input == null) child.stdin.end();
     else child.stdin.end(input);
@@ -114,6 +169,8 @@ function migrationError(output) {
   if (output?.includes("迁移密码错误")) return "迁移密码错误，或迁移包已经损坏";
   if (output?.includes("至少需要 8 个字符")) return "迁移密码至少需要 8 个字符";
   if (output?.includes("没有找到有效的 GitHub")) return "没有找到有效的 GitHub 登录状态，请先重新绑定";
+  if (output?.includes("GitHub 登录状态已过期")) return "迁移包中的 GitHub 登录状态已过期；数据已保留，请重新绑定 GitHub 账号";
+  if (output?.includes("无法在线验证迁移包")) return "无法在线验证迁移包中的 GitHub 登录状态，请检查网络后重试";
   return "迁移操作失败，请检查迁移包后重试";
 }
 
@@ -122,7 +179,7 @@ function setupError(output) {
   if (output?.includes("等待签到或余额任务结束超时")) return "当前签到或余额任务长时间未结束，请稍后重试";
   if (output?.includes("Timeout") || output?.includes("timeout")) return "等待 GitHub 登录超时，请重新绑定";
   if (output?.includes("Target page") || output?.includes("closed")) return "绑定窗口已关闭，GitHub 登录尚未完成";
-  if (output?.includes("登录未完成") || output?.includes("登录态已失效")) return "GitHub 登录尚未完成，请重新绑定";
+  if (output?.includes("登录未完成") || output?.includes("登录态已失效") || output?.includes("GitHub 仍未登录")) return "GitHub 登录尚未完成，请点击“切换账号”重新绑定";
   return "GitHub 绑定失败，请检查 Chrome 是否可以正常打开";
 }
 
@@ -142,11 +199,13 @@ async function getStatus() {
   const balance = db.latestAccountSnapshot();
   db.close();
   const settings = readSettings();
+  const authState = readAuthState();
   return {
     runs,
     latestRun: runs[0] || null,
     successfulToday: runs.some((run) => run.local_date === new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) && run.status === "success"),
-    initialized: fs.existsSync(path.join(dataDir, "browser-profile")),
+    initialized: Boolean(readGithubSession()?.cookies?.length) && authState.valid !== false,
+    authState,
     task: {
       installed: settings.taskEnabled,
       state: settings.taskEnabled ? "Cached" : "NotInstalled",
@@ -156,7 +215,7 @@ async function getStatus() {
     account: readAccount(),
     settings,
     dataDir,
-    appVersion: app.getVersion(),
+    appVersion: desktopPackage.version,
   };
 }
 
@@ -232,6 +291,21 @@ function createWindow() {
 
 ipcMain.handle("agent:get-status", getStatus);
 ipcMain.handle("agent:get-task-status", taskStatus);
+ipcMain.handle("agent:get-logs", () => {
+  const db = new CheckinDatabase(dbFile);
+  try {
+    return db.recentLogs(1000).map((entry) => {
+      if (!/(?:github_auth_required|github_binding_failure)/i.test(entry.event) && !/npm run setup|GitHub 登录态已失效|GitHub 登录状态已失效/i.test(entry.message)) return entry;
+      return {
+        ...entry,
+        message: "GitHub 登录状态不可用，请在设置页点击“切换账号”重新绑定",
+        details_json: null,
+      };
+    });
+  } finally {
+    db.close();
+  }
+});
 ipcMain.handle("agent:refresh-balance", refreshBalance);
 ipcMain.handle("agent:run-checkin", async (_event, { force }) => {
   const settings = readSettings();
@@ -242,9 +316,25 @@ ipcMain.handle("agent:run-checkin", async (_event, { force }) => {
 });
 ipcMain.handle("agent:set-task-enabled", (_event, { enabled }) => setTaskEnabled(enabled));
 ipcMain.handle("agent:save-settings", async (_event, settings) => {
-  const next = writeSettings(settings);
-  if (next.taskEnabled) await setTaskEnabled(true);
-  return next;
+  const previous = readSettings();
+  const currentTask = await getWindowsTaskStatus({
+    taskName,
+    dailyTime: previous.dailyTime,
+    expectedAppExecutable: app.isPackaged ? process.execPath : null,
+  });
+  const next = { ...previous, ...settings };
+  if (currentTask.installed) {
+    await installWindowsTask({
+      taskName,
+      projectRoot,
+      dailyTime: next.dailyTime,
+      dataDir,
+      appExecutable: app.isPackaged ? process.execPath : null,
+    });
+  }
+  writeSettings(settings);
+  const task = await taskStatus();
+  return { settings: readSettings(), task };
 });
 ipcMain.handle("agent:start-setup", async (event) => {
   const result = await runNodeCli(["setup-auto"], {
@@ -283,7 +373,7 @@ ipcMain.handle("agent:import-data", async (_event, { password }) => {
 
 app.whenReady().then(() => {
   if (process.argv.includes("--background-checkin")) {
-    runNodeCli(["run"]).then((result) => {
+    runNodeCli(["run"], process.argv.includes("--force") ? { AGENT_ROUTER_FORCE: "true" } : {}).then((result) => {
       if (!result.ok) process.exitCode = result.code || 1;
     }).finally(() => app.quit());
     return;

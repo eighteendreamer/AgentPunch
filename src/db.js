@@ -2,8 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+export function sanitizeDetails(value) {
+  if (Array.isArray(value)) return value.map(sanitizeDetails);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "githubCookies")
+      .map(([key, entry]) => [key, sanitizeDetails(entry)]),
+  );
+}
+
 function json(value) {
-  return value == null ? null : JSON.stringify(value);
+  return value == null ? null : JSON.stringify(sanitizeDetails(value));
 }
 
 export class CheckinDatabase {
@@ -48,6 +58,21 @@ export class CheckinDatabase {
       CREATE INDEX IF NOT EXISTS idx_account_snapshots_captured_at
         ON account_snapshots(captured_at DESC);
     `);
+    this.scrubSensitiveDetails();
+  }
+
+  scrubSensitiveDetails() {
+    for (const table of ["runs", "logs"]) {
+      const rows = this.db.prepare(`SELECT id, details_json FROM ${table} WHERE details_json LIKE '%githubCookies%'`).all();
+      const update = this.db.prepare(`UPDATE ${table} SET details_json = ? WHERE id = ?`);
+      for (const row of rows) {
+        try {
+          update.run(json(JSON.parse(row.details_json)), row.id);
+        } catch {
+          // 无效的旧 JSON 保持原样，避免破坏运行历史。
+        }
+      }
+    }
   }
 
   hasSuccessfulRun(localDate) {
@@ -89,6 +114,19 @@ export class CheckinDatabase {
       .prepare(
         `SELECT id, local_date, started_at, finished_at, status, checked_in, message
          FROM runs ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  recentLogs(limit = 1000) {
+    return this.db
+      .prepare(
+        `SELECT logs.id, logs.run_id, logs.created_at, logs.level, logs.event,
+                logs.message, logs.details_json, runs.local_date, runs.status AS run_status
+         FROM logs
+         LEFT JOIN runs ON runs.id = logs.run_id
+         ORDER BY logs.created_at DESC, logs.id DESC
+         LIMIT ?`,
       )
       .all(limit);
   }

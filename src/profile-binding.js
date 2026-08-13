@@ -8,6 +8,34 @@ export function githubSessionFromCookies(cookies) {
   return { username: username ? decodeURIComponent(username) : null };
 }
 
+export function githubLoginPageSettled(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname !== "github.com") return false;
+    return !/^\/(?:login|session|sessions|two-factor)(?:\/|$)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function persistentGithubCookies(cookies, nowSeconds = Date.now() / 1000) {
+  const minimumExpiry = Math.floor(nowSeconds + 30 * 24 * 60 * 60);
+  return cookies
+    .filter((cookie) => /(^|\.)github\.com$/i.test(cookie.domain))
+    .filter((cookie) => ["user_session", "__Host-user_session_same_site", "logged_in", "dotcom_user"].includes(cookie.name))
+    .map(({ name, value, domain, path: cookiePath, expires, httpOnly, secure, sameSite, partitionKey }) => ({
+      name,
+      value,
+      domain,
+      path: cookiePath || "/",
+      expires: expires > nowSeconds ? expires : minimumExpiry,
+      httpOnly: Boolean(httpOnly),
+      secure: Boolean(secure),
+      sameSite: sameSite || "Lax",
+      ...(partitionKey ? { partitionKey } : {}),
+    }));
+}
+
 export function replaceBrowserProfile({ currentProfileDir, pendingProfileDir, previousProfileDir, finalize = () => {} }) {
   if (!fs.existsSync(pendingProfileDir)) throw new Error("新的浏览器配置不存在，无法完成账号切换");
 

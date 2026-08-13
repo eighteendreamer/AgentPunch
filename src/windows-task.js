@@ -122,10 +122,11 @@ export async function getWindowsTaskStatus({ taskName, dailyTime, expectedAppExe
     });
     const enabled = !/<Enabled>\s*false\s*<\/Enabled>/i.test(stdout);
     const inspection = inspectTaskXml(stdout, expectedAppExecutable);
+    const effectiveDailyTime = inspection.configuredDailyTime || dailyTime;
     return {
       installed: true,
       state: enabled ? "Ready" : "Disabled",
-      nextRunTime: enabled ? nextDailyRun(dailyTime).toISOString() : null,
+      nextRunTime: enabled ? nextDailyRun(effectiveDailyTime).toISOString() : null,
       lastRunTime: null,
       lastTaskResult: null,
       ...inspection,

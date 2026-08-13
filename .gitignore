@@ -5,3 +5,4 @@ data/
 apps/desktop/dist/
 apps/desktop/release/
 apps/desktop/release-package/
+apps/desktop/release-package-*/

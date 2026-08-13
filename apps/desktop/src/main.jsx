@@ -14,6 +14,7 @@ import {
   History,
   Home,
   LoaderCircle,
+  Logs,
   LockKeyhole,
   Play,
   Settings,
@@ -32,6 +33,16 @@ function formatDate(value) {
 
 function statusLabel(status) {
   return { success: "成功", failure: "失败", auth_required: "需要登录", running: "运行中" }[status] || status || "暂无";
+}
+
+function displayRunMessage(message) {
+  if (!message) return "—";
+  if (/ERR_CONNECTION_RESET/i.test(message)) return "访问 GitHub OAuth 时连接被重置，请检查网络后重试";
+  if (/ERR_(?:CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NETWORK_CHANGED|INTERNET_DISCONNECTED)|page\.goto.*Timeout/i.test(message)) {
+    return "访问 GitHub OAuth 时网络连接不稳定，请检查网络后重试";
+  }
+  if (/npm run setup|GitHub 登录态已失效|GitHub 登录状态已失效/i.test(message)) return "GitHub 登录状态不可用，请在设置页点击“切换账号”重新绑定";
+  return message;
 }
 
 function Sidebar({ page, setPage }) {
@@ -76,7 +87,7 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
           <div className="status-copy">
             <span className="status-kicker">{busy ? "正在运行" : success ? "状态正常" : "等待签到"}</span>
             <h2>{busy ? "正在完成 GitHub 登录签到" : success ? "今天已经签到" : "今天还没有成功记录"}</h2>
-            <p>{busy ? "正在清理旧会话并完成安全 OAuth 登录，请稍候。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${latest.message || statusLabel(latest.status)}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
+            <p>{busy ? "正在清理旧会话并完成安全 OAuth 登录，请稍候。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${displayRunMessage(latest.message || statusLabel(latest.status))}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
           </div>
         </div>
         <div className="hero-side">
@@ -116,7 +127,7 @@ function HistoryPage({ runs }) {
           <span className="history-time">{formatDate(run.started_at)}</span>
           <span><i className={`mini-dot ${run.status}`} /><b className={`history-result ${run.status}`}>{statusLabel(run.status)}</b></span>
           <span className={run.checked_in ? "checkin-result yes" : "checkin-result"}>{run.checked_in ? "已签到" : "—"}</span>
-          <span className="history-message" title={run.message}>{run.message || "—"}</span>
+          <span className="history-message" title={run.message}>{displayRunMessage(run.message)}</span>
         </div>)}
         {!runs?.length && <div className="empty-row large">还没有运行记录</div>}
       </section>
@@ -124,7 +135,7 @@ function HistoryPage({ runs }) {
   );
 }
 
-function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration }) {
+function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs }) {
   const [form, setForm] = useState(status?.settings || { dailyTime: "09:00", headless: true });
   useEffect(() => setForm(status?.settings || form), [status?.settings]);
   const dirty =
@@ -143,23 +154,51 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
           <div className="setting-group">
             <div className="setting-row"><div><strong>每日执行时间</strong><p>错过时间后会在下次可用时补运行。</p></div><input type="time" value={form.dailyTime} onChange={(e) => setForm({ ...form, dailyTime: e.target.value })} /></div>
             <div className="setting-row"><div><strong>后台运行浏览器</strong><p>关闭后，签到时会显示 Chrome 窗口。</p></div><Toggle checked={form.headless} onChange={(value) => setForm({ ...form, headless: value })} /></div>
+            <div className="setting-row"><div><strong>运行日志</strong><p>按时间查看签到与 OAuth 执行过程。</p></div><button className="secondary-button" onClick={onOpenLogs}>查看日志 <ChevronRight size={15} /></button></div>
           </div>
         </div>
         <div className="settings-column account-column">
           <div className="settings-section-heading"><CircleUser size={20} /><div><h3>账户与数据</h3><p>维护 GitHub 登录状态和本机文件。</p></div></div>
           <div className="setting-group">
-            <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}登录状态保存在独立 Chrome 配置中。` : "尚未完成首次绑定。"}</p></div><button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "绑定账号"} {!setupBusy && <ExternalLink size={15} />}</button></div>
+            <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}会话由 Windows 加密保存在本机。` : status?.authState?.valid === false ? "登录状态不可用，请重新绑定。" : "尚未完成首次绑定。"}</p></div><button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "重新绑定"} {!setupBusy && <ExternalLink size={15} />}</button></div>
             <div className="setting-row"><div><strong>本地数据</strong><p className="path-text">{status?.dataDir}</p></div><button className="secondary-button" onClick={onOpenData}>打开目录 <ChevronRight size={15} /></button></div>
             <div className="setting-row migration-row"><div><strong>账号迁移</strong><p>加密导出 GitHub 登录状态、设置与运行历史。</p></div><div className="setting-actions"><button className="secondary-button" disabled={setupBusy} onClick={() => onMigration("import")}><Upload size={15} />导入</button><button className="secondary-button" onClick={() => onMigration("export")} disabled={setupBusy || !status?.initialized}><Download size={15} />导出</button></div></div>
           </div>
         </div>
       </section>
       <div className="settings-footer">
-        <div className="settings-security"><ShieldCheck size={16} /><span>密码、Cookie 与 2FA 密钥不会写入配置或数据库。</span></div>
+        <div className="settings-security"><ShieldCheck size={16} /><span>密码和 2FA 密钥不会保存；GitHub 会话由 Windows 加密存储，不写入数据库。</span></div>
         <span className="app-version">AgentPunch v{status?.appVersion || "—"}</span>
       </div>
     </main>
   );
+}
+
+function LogDialog({ value, onClose, onRefresh }) {
+  if (!value) return null;
+  const levelLabel = { info: "信息", warn: "警告", error: "错误" };
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <section className="log-dialog" role="dialog" aria-modal="true" aria-labelledby="log-dialog-title">
+      <header className="log-dialog-header">
+        <div className="log-dialog-title"><span className="log-dialog-icon"><Logs size={20} /></span><div><h2 id="log-dialog-title">运行日志</h2><p>共 {value.logs.length} 条记录，按时间从新到旧排列。</p></div></div>
+        <div className="log-dialog-actions"><button className="secondary-button" disabled={value.loading} onClick={onRefresh}>{value.loading ? <LoaderCircle className="spin" size={15} /> : null}刷新</button><button className="dialog-close static" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+      </header>
+      {value.error ? <div className="log-dialog-error"><CircleAlert size={17} />{value.error}</div> : <div className="log-table-wrap">
+        <div className="log-table">
+          <div className="log-table-head"><span>时间</span><span>级别</span><span>事件</span><span>运行</span><span>日志信息</span></div>
+          {value.logs.map((log) => <div className="log-table-row" key={log.id}>
+            <time dateTime={log.created_at}>{formatDate(log.created_at)}</time>
+            <span><i className={`log-level-dot ${log.level}`} /><b className={`log-level ${log.level}`}>{levelLabel[log.level] || log.level}</b></span>
+            <code>{log.event || "—"}</code>
+            <span className="log-run">{log.local_date ? `${log.local_date} · #${log.run_id}` : "系统"}</span>
+            <details className="log-message"><summary>{displayRunMessage(log.message)}</summary>{log.details_json && <pre>{log.details_json}</pre>}</details>
+          </div>)}
+          {!value.logs.length && !value.loading && <div className="log-empty">暂无日志记录</div>}
+          {value.loading && !value.logs.length && <div className="log-empty"><LoaderCircle className="spin" size={18} />正在读取日志</div>}
+        </div>
+      </div>}
+    </section>
+  </div>;
 }
 
 function MigrationDialog({ value, onChange, onClose, onConfirm }) {
@@ -190,6 +229,7 @@ function App() {
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupPhase, setSetupPhase] = useState(null);
   const [migration, setMigration] = useState(null);
+  const [logDialog, setLogDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const notify = (message, tone = "ok") => { setToast({ message, tone }); setTimeout(() => setToast(null), 3600); };
   const refresh = async () => {
@@ -269,7 +309,15 @@ function App() {
       notify(error?.message ? `自动任务修改失败：${error.message.replace(/^Error invoking remote method '[^']+':\s*/, "")}` : "自动任务修改失败，请稍后重试", "error");
     }
   }
-  async function saveSettings(settings) { await api.saveSettings(settings); notify("设置已保存"); await refresh(); }
+  async function saveSettings(settings) {
+    try {
+      const result = await api.saveSettings(settings);
+      setStatus((current) => current ? { ...current, settings: result.settings, task: result.task } : current);
+      notify("设置已保存，自动任务时间已同步");
+    } catch (error) {
+      notify(error?.message ? `设置保存失败：${error.message.replace(/^Error invoking remote method '[^']+':\s*/, "")}` : "设置保存失败，请稍后重试", "error");
+    }
+  }
   async function setup() {
     if (setupBusy) return;
     setSetupBusy(true);
@@ -292,6 +340,15 @@ function App() {
   }
   function openMigration(mode) {
     setMigration({ mode, password: "", confirmPassword: "", busy: false, error: null });
+  }
+  async function loadLogs() {
+    setLogDialog((current) => ({ logs: current?.logs || [], loading: true, error: null }));
+    try {
+      const logs = await api.getLogs();
+      setLogDialog({ logs, loading: false, error: null });
+    } catch {
+      setLogDialog((current) => ({ logs: current?.logs || [], loading: false, error: "日志读取失败，请稍后重试。" }));
+    }
   }
   async function confirmMigration() {
     if (migration.password.length < 8) {
@@ -333,9 +390,10 @@ function App() {
     <div className="workspace">
       {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} />}
       {page === "history" && <HistoryPage runs={status?.runs} />}
-      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} />}
+      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} />}
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
+    <LogDialog value={logDialog} onClose={() => setLogDialog(null)} onRefresh={loadLogs} />
     {toast && <div className={`toast ${toast.tone}`}>{toast.tone === "error" ? <CircleAlert size={18} /> : <CheckCircle2 size={18} />}<span>{toast.message}</span></div>}
   </div>;
 }

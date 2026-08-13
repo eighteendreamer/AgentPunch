@@ -25,7 +25,8 @@ nav { display: grid; gap: 4px; }
 .nav-item:hover { background: rgba(225,230,239,.65); color: #202a3c; }
 .nav-item.active { background: #e7edf9; color: #174a9f; font-weight: 600; }
 .sidebar-foot { margin-top: auto; display: flex; gap: 9px; align-items: center; padding: 12px; color: #788296; font-size: 12px; }
-.workspace { overflow: auto; }
+.workspace { overflow: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.workspace::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .page { max-width: 1180px; margin: 0 auto; padding: 46px 52px 54px; animation: page-in .28s ease both; }
 @keyframes page-in { from { opacity: 0; transform: translateY(5px); } }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 26px; }
@@ -41,7 +42,8 @@ nav { display: grid; gap: 4px; }
 .hero-status.pending .status-symbol { color: #846323; background: #f7edce; }
 .status-kicker { display: inline-block; color: var(--green); font-size: 13px; font-weight: 700; margin-bottom: 7px; }
 .status-copy h2 { margin: 0; font-size: 28px; letter-spacing: -.65px; }
-.status-copy p { margin: 10px 0 0; color: var(--muted); line-height: 1.6; max-width: 590px; font-size: 14px; }
+.status-copy { min-width: 0; overflow: hidden; }
+.status-copy p { margin: 10px 0 0; color: var(--muted); line-height: 1.6; max-width: 590px; font-size: 14px; overflow-wrap: anywhere; }
 .balance-summary { min-width: 154px; display: grid; gap: 4px; }
 .balance-summary > span { color: var(--muted); font-size: 12px; }
 .balance-summary strong { color: #182238; font-size: 27px; line-height: 1.2; letter-spacing: -.55px; font-variant-numeric: tabular-nums; }
@@ -137,6 +139,32 @@ nav { display: grid; gap: 4px; }
 .toast.error { color: #a23333; border-color: #efd1d1; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px; background: rgba(22,29,43,.34); backdrop-filter: blur(5px); animation: modal-in .18s ease both; }
 .migration-dialog { position: relative; width: min(430px, 100%); padding: 28px; border: 1px solid rgba(218,224,234,.9); border-radius: 14px; background: #fbfcfe; box-shadow: 0 24px 70px rgba(21,30,48,.24); }
+.log-dialog { width: min(1180px, 94vw); height: min(760px, 88vh); display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; border: 1px solid rgba(218,224,234,.9); border-radius: 14px; background: #fbfcfe; box-shadow: 0 24px 70px rgba(21,30,48,.24); }
+.log-dialog-header { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.log-dialog-title, .log-dialog-actions { display: flex; align-items: center; gap: 12px; }
+.log-dialog-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: var(--accent); background: #e5edff; }
+.log-dialog-title h2 { margin: 0; font-size: 20px; letter-spacing: -.3px; }
+.log-dialog-title p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.dialog-close.static { position: static; flex: 0 0 auto; }
+.log-table-wrap { min-height: 0; overflow: auto; }
+.log-table { min-width: 960px; }
+.log-table-head, .log-table-row { display: grid; grid-template-columns: 132px 76px 150px 150px minmax(360px,1fr); align-items: start; column-gap: 16px; padding: 0 22px; }
+.log-table-head { position: sticky; top: 0; z-index: 1; min-height: 44px; align-items: center; color: var(--muted); background: #f1f3f7; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 650; }
+.log-table-row { min-height: 58px; padding-top: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.log-table-row:hover { background: rgba(235,239,245,.42); }
+.log-table-row time, .log-run { color: #647087; font-variant-numeric: tabular-nums; }
+.log-table-row > span:nth-child(2) { display: flex; align-items: center; gap: 7px; }
+.log-level-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #5d81c4; }
+.log-level-dot.warn { background: #d59629; } .log-level-dot.error { background: var(--red); }
+.log-level { color: #46669f; font-size: 11px; } .log-level.warn { color: #9a6718; } .log-level.error { color: #b33b3b; }
+.log-table-row code { color: #42516a; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
+.log-message { min-width: 0; color: #273249; }
+.log-message summary { overflow-wrap: anywhere; line-height: 1.55; cursor: pointer; list-style: none; }
+.log-message summary::-webkit-details-marker { display: none; }
+.log-message[open] summary { font-weight: 600; }
+.log-message pre { max-height: 190px; margin: 10px 0 0; padding: 11px; overflow: auto; border-radius: 7px; color: #43516a; background: #eef1f5; white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.55 "Cascadia Code", Consolas, monospace; }
+.log-empty { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 13px; }
+.log-dialog-error { display: flex; align-items: center; justify-content: center; gap: 9px; color: #b33b3b; }
 .dialog-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; color: #697386; background: transparent; cursor: pointer; }
 .dialog-close:hover { background: #edf0f5; }
 .dialog-icon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 17px; border-radius: 12px; color: var(--accent); background: #e5edff; }
@@ -172,6 +200,12 @@ nav { display: grid; gap: 4px; }
   .secondary-button { background: #292f39; color: #d3d9e4; } .secondary-button:hover { background: #323944; }
   .toast { background: rgba(32,36,44,.96); border-color: #35463d; }
   .migration-dialog { color: #edf1f7; border-color: #353c48; background: #20252d; }
+  .log-dialog { color: #edf1f7; border-color: #353c48; background: #20252d; }
+  .log-dialog-icon { background: #263a5d; }
+  .log-table-head { background: #292f38; }
+  .log-table-row:hover { background: rgba(47,53,64,.38); }
+  .log-table-row code, .log-message { color: #d7dde8; }
+  .log-message pre { color: #cdd4df; background: #181c22; }
   .dialog-close:hover { background: #2a303a; }
   .dialog-icon { background: #263a5d; }
   .migration-dialog label { color: #d7dde8; }

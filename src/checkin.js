@@ -9,6 +9,22 @@ export class AuthRequiredError extends Error {
 
 const GITHUB_CLIENT_ID = "Ov23lidtiR4LeVZvVRNL";
 
+function isAgentRouterCallback(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === "https://agentrouter.org" && url.pathname === "/oauth/github";
+  } catch {
+    return false;
+  }
+}
+
+function domesticSessionCookie(cookie, baseUrl) {
+  if (!cookie || cookie.name !== "session") return null;
+  const hostname = new URL(baseUrl).hostname;
+  const { name, value, path: cookiePath, expires, httpOnly, secure, sameSite } = cookie;
+  return { name, value, domain: hostname, path: cookiePath || "/", expires, httpOnly, secure, sameSite };
+}
+
 async function withRetry(operation, attempts = 3) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -24,6 +40,17 @@ async function withRetry(operation, attempts = 3) {
 
 async function gotoWithRetry(page, url, timeout = 45_000) {
   return withRetry(() => page.goto(url, { waitUntil: "domcontentloaded", timeout }));
+}
+
+function navigationErrorMessage(error, destination) {
+  const message = String(error?.message || error || "");
+  if (/ERR_CONNECTION_RESET/i.test(message)) {
+    return `访问 ${destination} 时连接被重置，已自动重试 3 次，请检查网络后重试`;
+  }
+  if (/ERR_(?:CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NETWORK_CHANGED|INTERNET_DISCONNECTED)|Timeout/i.test(message)) {
+    return `访问 ${destination} 时网络连接不稳定，已自动重试 3 次，请检查网络后重试`;
+  }
+  return `访问 ${destination} 失败，请稍后重试`;
 }
 
 async function getJson(page, url, options = {}) {
@@ -73,7 +100,7 @@ async function clearAgentRouterState(context, page, origins, log) {
   log("info", "state_cleared", `已清理 ${origins.join("、")} 的 Cookie 和 Web Storage`);
 }
 
-async function ensureGithubOAuth(page, baseUrl, log) {
+async function ensureGithubOAuth(context, page, baseUrl, log) {
   await gotoWithRetry(page, `${baseUrl}/login`);
   const stateResponse = await withRetry(() => getJson(page, "/api/oauth/state?mode=login"));
   if (!stateResponse.ok || !stateResponse.body?.success || !stateResponse.body?.data) {
@@ -84,23 +111,49 @@ async function ensureGithubOAuth(page, baseUrl, log) {
   authorizeUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
   authorizeUrl.searchParams.set("state", stateResponse.body.data);
   authorizeUrl.searchParams.set("scope", "user:email");
-  const oauthResponsePromise = page
-    .waitForResponse((response) => response.url().includes("/api/oauth/github?"), { timeout: 60_000 })
+  const oauthResponsePromise = context
+    .waitForEvent("response", {
+      predicate: (response) => response.url().startsWith("https://agentrouter.org/api/oauth/github?"),
+      timeout: 60_000,
+    })
     .catch(() => null);
   let capturedCallbackUrl = null;
-  const mainDomainCallback = "https://agentrouter.org/oauth/github**";
-  await page.route(mainDomainCallback, async (route) => {
-    capturedCallbackUrl = route.request().url();
-    await route.abort();
-  });
+  const captureCallback = (url) => {
+    if (!capturedCallbackUrl && isAgentRouterCallback(url)) {
+      capturedCallbackUrl = url;
+      log("info", "oauth_callback_captured", "已捕获 GitHub OAuth 回调，准备切换到国内域名");
+    }
+  };
+  const requestListener = (request) => captureCallback(request.url());
+  context.on("request", requestListener);
+  const githubCookies = await context.cookies("https://github.com");
+  const githubUsername = githubCookies.find((cookie) => cookie.name === "dotcom_user")?.value || null;
+  const hasGithubSession = githubCookies.some((cookie) => cookie.name === "user_session" || cookie.name === "__Host-user_session_same_site");
+  const cleanupOAuthCapture = async () => {
+    context.off("request", requestListener);
+  };
+  log("info", "github_auth", hasGithubSession ? `检测到 GitHub 会话，正在在线验证${githubUsername ? `：@${githubUsername}` : ""}` : "正在验证 GitHub 登录态");
   log("info", "oauth_start", "开始 GitHub OAuth 授权");
-  await page.goto(authorizeUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch((error) => {
-    if (!capturedCallbackUrl) throw error;
-  });
+  try {
+    await withRetry(async () => {
+      try {
+        await page.goto(authorizeUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      } catch (error) {
+        if (!capturedCallbackUrl) throw error;
+      }
+    });
+  } catch (error) {
+    await cleanupOAuthCapture();
+    throw new Error(navigationErrorMessage(error, "GitHub OAuth"), { cause: error });
+  }
 
   if (page.url().startsWith("https://github.com/login")) {
-    throw new AuthRequiredError("GitHub 登录态已失效，请运行 npm run setup 重新登录");
+    await cleanupOAuthCapture();
+    log("warn", "github_auth_required", "GitHub 登录态已失效，需要重新绑定账号");
+    throw new AuthRequiredError("GitHub 登录态已失效，请在设置页点击“切换账号”重新绑定");
   }
+  log("info", "github_auth_verified", `GitHub 在线登录验证通过${githubUsername ? `：@${githubUsername}` : ""}`);
+  log("info", "github_oauth_page", "GitHub OAuth 授权页面已加载");
 
   const authorizeButton = page.locator(
     'button[name="authorize"], input[name="authorize"], button:has-text("Authorize"), button:has-text("授权")',
@@ -119,41 +172,40 @@ async function ensureGithubOAuth(page, baseUrl, log) {
   while (!capturedCallbackUrl && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  await page.unroute(mainDomainCallback);
-  if (!capturedCallbackUrl) throw new Error("未捕获到 GitHub OAuth 回调地址");
-
-  const domesticCallback = new URL("/oauth/github", baseUrl);
-  domesticCallback.search = new URL(capturedCallbackUrl).search;
-  log("info", "oauth_callback_rewritten", "已将 OAuth 回调切换到国内可访问域名");
-  await gotoWithRetry(page, domesticCallback.href, 60_000);
-  await page.waitForURL((url) => url.origin === baseUrl && url.pathname.startsWith("/console"), {
-    timeout: 60_000,
-    waitUntil: "domcontentloaded",
-  });
-  await page.waitForLoadState("domcontentloaded");
+  await cleanupOAuthCapture();
+  if (!capturedCallbackUrl) {
+    log("error", "oauth_callback_missing", "GitHub 授权已完成，但没有检测到 OAuth 回调请求");
+    throw new Error("GitHub 授权后未检测到回调请求，请重新绑定账号后重试");
+  }
 
   const oauthResponse = await oauthResponsePromise;
   const oauthBody = oauthResponse ? await oauthResponse.json().catch(() => null) : null;
-  if (oauthBody?.success && oauthBody.data) return oauthBody.data;
-
-  const localUser = await page
-    .evaluate(() => {
-      try {
-        return JSON.parse(localStorage.getItem("user"));
-      } catch {
-        return null;
-      }
-    })
-    .catch(() => null);
-  const self = await withRetry(() =>
-    getJson(page, "/api/user/self", {
-      headers: localUser?.id ? { "New-API-User": String(localUser.id) } : {},
-    }),
-  );
-  if (!self.ok || !self.body?.success) {
-    throw new Error(`OAuth 回调后无法读取账户：${self.body?.message || self.status}`);
+  log("info", "oauth_api_response", "OAuth 接口响应已接收", {
+    received: Boolean(oauthResponse),
+    status: oauthResponse?.status() ?? null,
+    success: oauthBody?.success ?? null,
+    message: oauthBody?.message || null,
+    hasData: Boolean(oauthBody?.data),
+  });
+  if (!oauthBody?.success || !oauthBody.data) {
+    throw new Error(`GitHub OAuth 验证失败：${oauthBody?.message || "未收到有效响应"}`);
   }
-  return { ...self.body.data, checked_in: localUser?.checked_in ?? self.body.data?.checked_in };
+
+  let mainSession = null;
+  for (let attempt = 1; attempt <= 10 && !mainSession; attempt += 1) {
+    mainSession = (await context.cookies("https://agentrouter.org")).find((cookie) => cookie.name === "session") || null;
+    if (!mainSession) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const domesticCookie = domesticSessionCookie(mainSession, baseUrl);
+  if (!domesticCookie) throw new Error("GitHub OAuth 已成功，但没有获取到 AgentRouter 会话");
+  await context.addCookies([domesticCookie]);
+  log("info", "oauth_session_synced", "已将 AgentRouter 会话安全同步到国内域名");
+
+  await gotoWithRetry(page, `${baseUrl}/console`, 60_000);
+  await page.evaluate((user) => localStorage.setItem("user", JSON.stringify(user)), oauthBody.data);
+  log("info", "oauth_callback_complete", "AgentRouter OAuth 回调验证完成");
+  log("info", "github_auth_complete", `GitHub 认证成功${githubUsername ? `：@${githubUsername}` : ""}`);
+  return oauthBody.data;
 }
 
 async function readAccountBalance(page, knownUser = null) {
@@ -200,27 +252,34 @@ async function readAccountBalance(page, knownUser = null) {
   };
 }
 
-export async function runCheckin({ profileDir, baseUrl, headless, log }) {
+export async function runCheckin({ profileDir, baseUrl, headless, log, githubCookies = [] }) {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless,
     viewport: { width: 1280, height: 800 },
     locale: "zh-CN",
+    serviceWorkers: "block",
   });
   const page = context.pages()[0] ?? (await context.newPage());
 
   try {
+    if (githubCookies.length) {
+      await context.addCookies(githubCookies);
+      log("info", "github_session_restored", "已从 Windows 安全存储恢复 GitHub 会话");
+    }
     await clearAgentRouterState(context, page, [baseUrl], log);
-    const user = await ensureGithubOAuth(page, baseUrl, log);
+    const user = await ensureGithubOAuth(context, page, baseUrl, log);
     const balance = await readAccountBalance(page, user).catch((error) => {
       log("warn", "balance", "签到完成，但余额快照暂时无法更新", { error: error.message });
       return null;
     });
+    const refreshedGithubCookies = await context.cookies("https://github.com");
     return {
       checkedIn: Boolean(user?.checked_in),
       userId: user?.id ?? null,
       username: user?.username ?? null,
       balance,
+      githubCookies: refreshedGithubCookies,
     };
   } finally {
     await context.close();
@@ -233,6 +292,7 @@ export async function getAccountBalance({ profileDir, baseUrl, headless = true }
     headless,
     viewport: { width: 1280, height: 800 },
     locale: "zh-CN",
+    serviceWorkers: "block",
   });
   const page = context.pages()[0] ?? (await context.newPage());
 
@@ -250,8 +310,11 @@ export async function interactiveSetup({ profileDir, baseUrl }) {
     headless: false,
     viewport: null,
     locale: "zh-CN",
+    serviceWorkers: "block",
   });
   const page = context.pages()[0] ?? (await context.newPage());
   await page.goto("https://github.com/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
   return { context, page, baseUrl };
 }
+
+export const checkinInternals = { domesticSessionCookie, isAgentRouterCallback, navigationErrorMessage };
