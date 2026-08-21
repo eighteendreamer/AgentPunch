@@ -82,9 +82,28 @@ function readAuthState() {
   catch { return { valid: Boolean(readGithubSession()?.cookies?.length), verifiedAt: null }; }
 }
 
-function markAuthInvalid() {
+/**
+ * 检查 session 文件是否可以正常解密。
+ * 如果文件存在但解密失败（DPAPI 密钥变化等），清理旧文件并标记 auth 无效。
+ * 返回一个状态对象，包含是否有效和是否可以恢复。
+ */
+function cleanCorruptSession() {
+  const session = readGithubSession();
+  if (!session && fs.existsSync(githubSessionFile)) {
+    console.warn("[AgentPunch] github-session.bin 无法解密，可能 DPAPI 密钥已变化，正在清理...");
+    try { fs.rmSync(githubSessionFile, { force: true }); } catch {}
+    // 检查浏览器 profile 是否存在，如果有则可以尝试恢复
+    const profileDir = path.join(dataDir, "browser-profile");
+    const canRecover = fs.existsSync(profileDir);
+    markAuthInvalid(canRecover ? "recoverable" : null);
+    return { valid: false, canRecover };
+  }
+  return { valid: Boolean(session?.cookies?.length), canRecover: false };
+}
+
+function markAuthInvalid(reason = null) {
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(authStateFile, JSON.stringify({ valid: false, invalidatedAt: new Date().toISOString() }), "utf8");
+  fs.writeFileSync(authStateFile, JSON.stringify({ valid: false, invalidatedAt: new Date().toISOString(), ...(reason ? { reason } : {}) }), "utf8");
 }
 
 async function taskStatus() {
@@ -195,6 +214,7 @@ function setupProgressMessage(output) {
 
 async function getStatus() {
   fs.mkdirSync(dataDir, { recursive: true });
+  cleanCorruptSession();
   const db = new CheckinDatabase(dbFile);
   const runs = db.recentRuns(30);
   const balanceSnapshots = db.latestAccountSnapshot();
@@ -217,6 +237,7 @@ async function getStatus() {
     latestRun: runs[0] || null,
     successfulToday: runs.some((run) => run.local_date === new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date()) && run.status === "success"),
     initialized: Boolean(readGithubSession()?.cookies?.length) && authState.valid !== false,
+    sessionRecoverable: authState.valid === false && authState.reason === "recoverable",
     authState,
     task: {
       installed: settings.taskEnabled,
@@ -447,6 +468,7 @@ ipcMain.handle("agent:install-update", async () => {
 });
 
 app.whenReady().then(() => {
+  cleanCorruptSession();
   if (process.argv.includes("--background-checkin")) {
     runNodeCli(["run"], process.argv.includes("--force") ? { AGENT_ROUTER_FORCE: "true" } : {}).then((result) => {
       if (!result.ok) process.exitCode = result.code || 1;

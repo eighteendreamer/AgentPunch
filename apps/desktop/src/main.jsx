@@ -122,7 +122,7 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
         </div>
         <div className="automation-facts">
           <div className="fact-item"><CalendarClock size={20} /><span><small>下次运行</small><strong>{taskOn ? status?.task?.nextRunTime ? formatDate(status.task.nextRunTime) : `每天 ${status?.settings?.dailyTime}` : "未启用"}</strong></span></div>
-          <div className="fact-item"><CircleUser size={20} /><span><small>GitHub 登录</small><strong>{setupBusy ? setupPhase || "正在绑定" : status?.initialized ? githubUsername ? `已绑定 @${githubUsername}` : "已绑定" : "尚未绑定"}</strong></span>{!status?.initialized && <button className="text-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? "处理中" : "去绑定"}</button>}</div>
+          <div className="fact-item"><CircleUser size={20} /><span><small>GitHub 登录</small><strong>{setupBusy ? setupPhase || "正在绑定" : status?.initialized ? githubUsername ? `已绑定 @${githubUsername}` : "已绑定" : status?.sessionRecoverable ? "可恢复" : "尚未绑定"}</strong></span>{!status?.initialized && (status?.sessionRecoverable ? <button className="text-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? "恢复中" : "恢复登录"}</button> : <button className="text-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? "处理中" : "去绑定"}</button>)}</div>
           <div className="fact-item"><Database size={20} /><span><small>运行数据</small><strong>仅保存在本机</strong></span></div>
         </div>
         <div className="automation-note"><ShieldCheck size={16} /><span>密码、Cookie 与 2FA 密钥不会写入数据库。</span></div>
@@ -165,7 +165,7 @@ function HistoryPage({ runs }) {
   );
 }
 
-function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs, onCheckUpdate }) {
+function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs, onCheckUpdate, onRun, busy }) {
   const [form, setForm] = useState(status?.settings || { dailyTime: "09:00", headless: true });
   useEffect(() => setForm(status?.settings || form), [status?.settings]);
   const dirty =
@@ -190,7 +190,7 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
         <div className="settings-column account-column">
           <div className="settings-section-heading"><CircleUser size={20} /><div><h3>账户与数据</h3><p>维护 GitHub 登录状态和本机文件。</p></div></div>
           <div className="setting-group">
-            <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}会话由 Windows 加密保存在本机。` : status?.authState?.valid === false ? "登录状态不可用，请重新绑定。" : "尚未完成首次绑定。"}</p></div><button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "重新绑定"} {!setupBusy && <ExternalLink size={15} />}</button></div>
+            <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}会话由 Windows 加密保存在本机。` : status?.sessionRecoverable ? "登录状态需恢复。点击「恢复登录」运行一次签到即可自动恢复。" : status?.authState?.valid === false ? "登录状态不可用，请重新绑定。" : "尚未完成首次绑定。"}</p></div>{status?.sessionRecoverable ? <button className="secondary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{busy || setupBusy ? "恢复中" : "恢复登录"} {!busy && !setupBusy && <ExternalLink size={15} />}</button> : <button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "重新绑定"} {!setupBusy && <ExternalLink size={15} />}</button>}</div>
             <div className="setting-row"><div><strong>本地数据</strong><p className="path-text">{status?.dataDir}</p></div><button className="secondary-button" onClick={onOpenData}>打开目录 <ChevronRight size={15} /></button></div>
             <div className="setting-row migration-row"><div><strong>账号迁移</strong><p>加密导出 GitHub 登录状态、设置与运行历史。</p></div><div className="setting-actions"><button className="secondary-button" disabled={setupBusy} onClick={() => onMigration("import")}><Upload size={15} />导入</button><button className="secondary-button" onClick={() => onMigration("export")} disabled={setupBusy || !status?.initialized}><Download size={15} />导出</button></div></div>
             <div className="setting-row"><div><strong>检查更新</strong><p>从 GitHub 仓库检查并下载最新版本。</p></div><button className="secondary-button" onClick={onCheckUpdate}><RefreshCw size={15} />检查更新</button></div>
@@ -514,7 +514,7 @@ function App() {
     <div className="workspace">
       {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} />}
       {page === "history" && <HistoryPage runs={status?.runs} />}
-      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} />}
+      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} onRun={runNow} busy={busy} />}
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
     <UpdateDialog value={updateDialog} onClose={() => setUpdateDialog(null)} onDownload={downloadUpdate} onInstall={installUpdateNow} />
