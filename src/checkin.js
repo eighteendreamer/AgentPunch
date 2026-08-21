@@ -267,6 +267,22 @@ async function readAccountBalance(page, knownUser = null) {
 const JUSTWOKER_BASE_URL = "https://api.justwoker.icu";
 
 async function readJustWokerBalance(page) {
+  // 先主动刷新 JWT token（JustDoWork 使用 refresh cookie 换取新 access_token）
+  await page.evaluate(async () => {
+    try {
+      const resp = await fetch("/api/user/auth/refresh", {
+        method: "POST",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const data = await resp.json();
+      if (data?.success && data?.data?.access_token) {
+        // 保存到 localStorage，后续请求使用
+        localStorage.setItem("token", JSON.stringify({ access_token: data.data.access_token }));
+      }
+    } catch {}
+  });
+
   const result = await page.evaluate(async () => {
     // JustDoWork 使用 JWT Bearer token，存储在 localStorage
     let accessToken = null;
@@ -509,13 +525,24 @@ export async function getAccountBalance({ profileDir, baseUrl, headless = true, 
 
     // JustDoWork 余额
     try {
+      // 尝试直接进入 dashboard，如果未登录则走 GitHub OAuth
       await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/dashboard/overview`, 60_000);
-      // 等待页面加载和自动刷新 token
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      const justwokerBalance = await readJustWokerBalance(page);
-      results.justwoker = justwokerBalance;
+      if (page.url().includes("/sign-in")) {
+        // 未登录，点击 GitHub 登录按钮
+        const githubButton = page.locator('button:has-text("GitHub")');
+        await githubButton.first().click({ timeout: 10_000 });
+        await page.waitForURL(/\/dashboard/, { timeout: 60_000 }).catch(() => {});
+      }
+      if (page.url().includes("/dashboard")) {
+        // 等待页面加载和自动刷新 token
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const justwokerBalance = await readJustWokerBalance(page);
+        results.justwoker = justwokerBalance;
+      } else {
+        console.error("[balance] JustDoWork 未进入 dashboard，当前 URL:", page.url());
+      }
     } catch (error) {
-      // JustDoWork 余额获取失败
+      console.error("[balance] JustDoWork 余额获取失败:", error.message);
     }
 
     // 返回多站点余额；向后兼容：如果有 agentrouter 余额也放到顶层
