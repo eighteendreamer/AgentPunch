@@ -196,9 +196,10 @@ export function downloadInstaller(url, onProgress) {
  * @param {string} installerPath 安装包路径
  */
 export function installUpdate(installerPath) {
-  // 启动 NSIS 安装程序（静默模式），然后退出当前应用
-  // 安装完成后，NSIS 会自动启动新版本
-  const child = spawn(installerPath, ["/S"], {
+  // 启动 NSIS 安装程序（静默模式 + --updated 标记），然后退出当前应用
+  // --updated 参数让卸载脚本跳过"是否删除本地数据"的询问，确保更新不丢失绑定状态
+  // /S = 静默安装，--updated = 标记为更新场景（非用户手动卸载）
+  const child = spawn(installerPath, ["/S", "--updated"], {
     detached: true,
     stdio: "ignore",
     windowsHide: false,
