@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarClock,
@@ -47,11 +47,11 @@ function displayRunMessage(message) {
   if (/ERR_(?:CONNECTION_CLOSED|CONNECTION_TIMED_OUT|TIMED_OUT|NETWORK_CHANGED|INTERNET_DISCONNECTED)|page\.goto.*Timeout/i.test(message)) {
     return "访问 GitHub OAuth 时网络连接不稳定，请检查网络后重试";
   }
-  if (/npm run setup|GitHub 登录态已失效|GitHub 登录状态已失效/i.test(message)) return "GitHub 登录状态不可用，请在设置页点击“切换账号”重新绑定";
+  if (/npm run setup|GitHub 登录态已失效|GitHub 登录状态已失效/i.test(message)) return "GitHub 登录状态不可用，请在设置页点击「切换账号」重新绑定";
   return message;
 }
 
-function Sidebar({ page, setPage }) {
+function Sidebar({ page, setPage, busy, updateBadge }) {
   const items = [
     ["home", Home, "首页"],
     ["history", History, "运行历史"],
@@ -64,9 +64,11 @@ function Sidebar({ page, setPage }) {
         {items.map(([id, Icon, label]) => (
           <button key={id} className={page === id ? "nav-item active" : "nav-item"} onClick={() => setPage(id)}>
             <Icon size={18} /><span>{label}</span>
+            {id === "settings" && updateBadge && <span className="nav-badge" />}
           </button>
         ))}
       </nav>
+      {busy && <div className="sidebar-busy"><LoaderCircle className="spin" size={13} /><span>{busy}</span></div>}
       <div className="sidebar-foot"><ShieldCheck size={17} /><span>本地安全运行</span></div>
     </aside>
   );
@@ -81,7 +83,6 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
   const success = status?.successfulToday;
   const taskOn = status?.task?.installed;
   const githubUsername = status?.account?.githubUsername;
-  // balance 是 { agentrouter: { balance, used, currency, ... }, justwoker: { ... } } 格式
   const siteBalances = balance?.ok ? balance.data : (status?.balance || {});
   const siteList = Object.entries(siteBalances || {}).filter(([, v]) => v && v.balance !== undefined);
   const hasAnyBalance = siteList.length > 0;
@@ -97,7 +98,7 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
           <div className="status-copy">
             <span className="status-kicker">{busy ? "正在运行" : success ? "状态正常" : "等待签到"}</span>
             <h2>{busy ? "正在完成 GitHub 登录签到" : success ? "今天已经签到" : "今天还没有成功记录"}</h2>
-            <p>{busy ? "正在清理旧会话并完成安全 OAuth 登录，请稍候。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${displayRunMessage(latest.message || statusLabel(latest.status))}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
+            <p>{busy ? "正在后台执行签到任务，可继续使用其他功能。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${displayRunMessage(latest.message || statusLabel(latest.status))}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
           </div>
         </div>
         <div className="hero-side">
@@ -165,7 +166,7 @@ function HistoryPage({ runs }) {
   );
 }
 
-function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs, onCheckUpdate, onRun, busy }) {
+function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs, onCheckUpdate, onRun, busy, updateState }) {
   const [form, setForm] = useState(status?.settings || { dailyTime: "09:00", headless: true });
   useEffect(() => setForm(status?.settings || form), [status?.settings]);
   const dirty =
@@ -193,7 +194,7 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
             <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}会话由 Windows 加密保存在本机。` : status?.sessionRecoverable ? "登录状态需恢复。点击「恢复登录」运行一次签到即可自动恢复。" : status?.authState?.valid === false ? "登录状态不可用，请重新绑定。" : "尚未完成首次绑定。"}</p></div>{status?.sessionRecoverable ? <button className="secondary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{busy || setupBusy ? "恢复中" : "恢复登录"} {!busy && !setupBusy && <ExternalLink size={15} />}</button> : <button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "重新绑定"} {!setupBusy && <ExternalLink size={15} />}</button>}</div>
             <div className="setting-row"><div><strong>本地数据</strong><p className="path-text">{status?.dataDir}</p></div><button className="secondary-button" onClick={onOpenData}>打开目录 <ChevronRight size={15} /></button></div>
             <div className="setting-row migration-row"><div><strong>账号迁移</strong><p>加密导出 GitHub 登录状态、设置与运行历史。</p></div><div className="setting-actions"><button className="secondary-button" disabled={setupBusy} onClick={() => onMigration("import")}><Upload size={15} />导入</button><button className="secondary-button" onClick={() => onMigration("export")} disabled={setupBusy || !status?.initialized}><Download size={15} />导出</button></div></div>
-            <div className="setting-row"><div><strong>检查更新</strong><p>从 GitHub 仓库检查并下载最新版本。</p></div><button className="secondary-button" onClick={onCheckUpdate}><RefreshCw size={15} />检查更新</button></div>
+            <div className="setting-row"><div><strong>检查更新</strong><p>{updateState?.checking ? "正在后台检查更新…" : updateState?.hasUpdate ? `发现新版本 v${updateState.latestVersion}` : "从 GitHub 仓库检查并下载最新版本。"}</p></div><button className="secondary-button" disabled={updateState?.checking} onClick={onCheckUpdate}>{updateState?.checking ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{updateState?.checking ? "检查中" : "检查更新"}</button></div>
           </div>
         </div>
       </section>
@@ -235,16 +236,12 @@ function LogDialog({ value, onClose, onRefresh }) {
 
 function UpdateDialog({ value, onClose, onDownload, onInstall }) {
   if (!value) return null;
-  const { checking, hasUpdate, latestVersion, releaseNotes, releaseUrl, downloading, downloadProgress, downloaded, error } = value;
-  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !checking && !downloading && onClose()}>
+  const { hasUpdate, latestVersion, releaseNotes, releaseUrl, downloading, downloadProgress, downloaded, error } = value;
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !downloading && onClose()}>
     <section className="migration-dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
-      <button className="dialog-close" disabled={checking || downloading} onClick={onClose} aria-label="关闭"><X size={18} /></button>
+      <button className="dialog-close" disabled={downloading} onClick={onClose} aria-label="关闭"><X size={18} /></button>
       <div className="dialog-icon"><RefreshCw size={23} /></div>
-      {checking ? <>
-        <h2 id="update-title">正在检查更新…</h2>
-        <p>正在从 GitHub 获取最新版本信息。</p>
-        <div className="update-loading"><LoaderCircle className="spin" size={28} /></div>
-      </> : error ? <>
+      {error ? <>
         <h2 id="update-title">检查更新失败</h2>
         <p className="update-error-text">{error}</p>
         <div className="dialog-actions"><button className="primary-button" onClick={onClose}>关闭</button></div>
@@ -295,15 +292,22 @@ function App() {
   const [page, setPage] = useState(["home", "history", "settings"].includes(requestedPage) ? requestedPage : "home");
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState(null);
   const [balance, setBalance] = useState(null);
   const [balanceBusy, setBalanceBusy] = useState(false);
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupPhase, setSetupPhase] = useState(null);
   const [migration, setMigration] = useState(null);
   const [updateDialog, setUpdateDialog] = useState(null);
+  const [updateState, setUpdateState] = useState(null);
   const [logDialog, setLogDialog] = useState(null);
   const [toast, setToast] = useState(null);
-  const notify = (message, tone = "ok") => { setToast({ message, tone }); setTimeout(() => setToast(null), 3600); };
+  const toastTimer = useRef(null);
+  const notify = (message, tone = "ok") => {
+    setToast({ message, tone });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3600);
+  };
   const refresh = async () => {
     const next = await api.getStatus();
     setStatus(next);
@@ -355,12 +359,14 @@ function App() {
     setUpdateDialog((current) => current ? { ...current, downloadProgress: progress } : current);
   }), []);
 
+  // 检查更新：后台静默执行，不弹模态窗
   async function checkUpdate() {
-    setUpdateDialog({ checking: true, currentVersion: status?.appVersion || "—" });
+    if (updateState?.checking) return;
+    setUpdateState({ checking: true });
     try {
       const result = await api.checkUpdate();
       if (result.ok) {
-        setUpdateDialog({
+        const nextState = {
           checking: false,
           hasUpdate: result.hasUpdate,
           latestVersion: result.latestVersion,
@@ -371,12 +377,23 @@ function App() {
           downloading: false,
           downloadProgress: 0,
           downloaded: false,
-        });
+        };
+        setUpdateState(nextState);
+        if (result.hasUpdate) {
+          // 有更新才弹出对话框
+          setUpdateDialog(nextState);
+          notify(`发现新版本 v${result.latestVersion}`, "ok");
+        } else {
+          // 无更新只弹 toast
+          notify(result.error || "已是最新版本", result.error ? "error" : "ok");
+        }
       } else {
-        setUpdateDialog({ checking: false, hasUpdate: false, currentVersion: status?.appVersion || "—", error: result.error || "检查更新失败" });
+        setUpdateState({ checking: false, hasUpdate: false, error: result.error });
+        notify(result.error || "检查更新失败", "error");
       }
     } catch (error) {
-      setUpdateDialog({ checking: false, hasUpdate: false, currentVersion: status?.appVersion || "—", error: error.message || "检查更新失败" });
+      setUpdateState({ checking: false, hasUpdate: false, error: error.message });
+      notify(error.message || "检查更新失败", "error");
     }
   }
   async function downloadUpdate() {
@@ -402,15 +419,18 @@ function App() {
     }
   }
 
+  // 签到：后台执行，不阻塞页面切换
   async function runNow() {
     if (busy || setupBusy) return;
     setBusy(true);
+    setBusyLabel("签到中");
     try {
       const result = await api.runCheckin(false);
       notify(result.ok ? "签到任务已完成" : result.output?.includes("已有签到进程") ? "余额更新完成后，请再试一次签到" : "签到失败，请查看运行历史", result.ok ? "ok" : "error");
       await refresh();
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }
   async function toggleTask(enabled) {
@@ -510,11 +530,14 @@ function App() {
   const title = useMemo(() => page === "home" ? "首页" : page === "history" ? "运行历史" : "设置", [page]);
   useEffect(() => { document.title = `AgentPunch · ${title}`; }, [title]);
 
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} />
+  const sidebarBusy = busy ? busyLabel : null;
+  const updateBadge = updateState?.hasUpdate && !updateDialog;
+
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} busy={sidebarBusy} updateBadge={updateBadge} />
     <div className="workspace">
       {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} />}
       {page === "history" && <HistoryPage runs={status?.runs} />}
-      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} onRun={runNow} busy={busy} />}
+      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} onRun={runNow} busy={busy} updateState={updateState} />}
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
     <UpdateDialog value={updateDialog} onClose={() => setUpdateDialog(null)} onDownload={downloadUpdate} onInstall={installUpdateNow} />

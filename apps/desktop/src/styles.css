@@ -25,6 +25,8 @@ nav { display: grid; gap: 4px; }
 .nav-item:hover { background: rgba(225,230,239,.65); color: #202a3c; }
 .nav-item.active { background: #e7edf9; color: #174a9f; font-weight: 600; }
 .sidebar-foot { margin-top: auto; display: flex; gap: 9px; align-items: center; padding: 12px; color: #788296; font-size: 12px; }
+.sidebar-busy { display: flex; align-items: center; gap: 7px; padding: 8px 12px; color: var(--accent); font-size: 12px; font-weight: 600; }
+.nav-badge { display: inline-block; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
 .workspace { overflow: auto; scrollbar-width: none; -ms-overflow-style: none; }
 .workspace::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .page { max-width: 1180px; margin: 0 auto; padding: 46px 52px 54px; animation: page-in .28s ease both; }
