@@ -61,7 +61,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "AgentPunch",
+      "owner": "eighteendreamer",
       "repo": "AgentPunch",
       "releaseType": "release"
     }

@@ -8,7 +8,7 @@ import https from "node:https";
 // GitHub 仓库配置
 // 可以在这里修改为你的实际仓库地址
 // 也可以在 settings.json 中设置 githubOwner 和 githubRepo 来覆盖
-const DEFAULT_GITHUB_OWNER = "AgentPunch";
+const DEFAULT_GITHUB_OWNER = "eighteendreamer";
 const DEFAULT_GITHUB_REPO = "AgentPunch";
 
 function getGithubConfig() {
