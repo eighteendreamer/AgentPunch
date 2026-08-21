@@ -195,15 +195,22 @@ async function balance() {
   const lock = acquireLock();
   const db = new CheckinDatabase(dbFile);
   try {
+    const secret = readSecretMessage();
     const snapshot = await getAccountBalance({
       profileDir,
       baseUrl,
       headless: process.env.AGENT_ROUTER_HEADLESS !== "false",
+      githubCookies: secret?.type === "github-session" ? secret.cookies : [],
     });
-    db.saveAccountSnapshot(snapshot);
-    // 向后兼容：也以 agentrouter 站点身份保存
-    db.saveAccountSnapshot(snapshot, "agentrouter");
+    // 按站点保存余额快照
+    if (snapshot.agentrouter) db.saveAccountSnapshot(snapshot.agentrouter, "agentrouter");
+    if (snapshot.justwoker) db.saveAccountSnapshot(snapshot.justwoker, "justwoker");
+    // 向后兼容：顶层余额也保存一份（无 site）
+    if (snapshot.balance != null) db.saveAccountSnapshot(snapshot);
     console.log(JSON.stringify({
+      agentrouter: snapshot.agentrouter,
+      justwoker: snapshot.justwoker,
+      // 向后兼容字段
       balance: snapshot.balance,
       used: snapshot.used,
       requestCount: snapshot.requestCount,

@@ -59,8 +59,6 @@ export class CheckinDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_account_snapshots_captured_at
         ON account_snapshots(captured_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_account_snapshots_site
-        ON account_snapshots(site, captured_at DESC);
     `);
     // 为旧数据库迁移：添加 site 列（如果不存在）
     try {

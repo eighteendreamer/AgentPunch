@@ -266,6 +266,52 @@ async function readAccountBalance(page, knownUser = null) {
 
 const JUSTWOKER_BASE_URL = "https://api.justwoker.icu";
 
+async function readJustWokerBalance(page) {
+  const result = await page.evaluate(async () => {
+    // JustDoWork 使用 JWT Bearer token，存储在 localStorage
+    let accessToken = null;
+    try {
+      accessToken = JSON.parse(localStorage.getItem("token"))?.access_token || null;
+    } catch {}
+    // 兜底：有些版本直接存字符串
+    if (!accessToken) {
+      accessToken = localStorage.getItem("access_token") || null;
+    }
+
+    const headers = {
+      Accept: "application/json",
+      "Cache-Control": "no-store",
+    };
+    if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
+    const [statusResponse, userResponse] = await Promise.all([
+      fetch("/api/status", { credentials: "include", headers }).then((r) => r.json()),
+      fetch("/api/user/self", { credentials: "include", headers }).then((r) => r.json()),
+    ]);
+
+    if (!userResponse?.success) return { error: userResponse?.message || "AUTH_REQUIRED" };
+
+    return {
+      quota: Number(userResponse.data?.quota || 0),
+      usedQuota: Number(userResponse.data?.used_quota || 0),
+      requestCount: Number(userResponse.data?.request_count || 0),
+      quotaPerUnit: Number(statusResponse?.data?.quota_per_unit || 500000),
+      displayInCurrency: statusResponse?.data?.display_in_currency !== false,
+    };
+  });
+
+  if (result?.error) throw new AuthRequiredError("JustDoWork 登录态已失效，请重新绑定 GitHub");
+  const divisor = result.quotaPerUnit > 0 ? result.quotaPerUnit : 500000;
+  return {
+    balance: result.quota / divisor,
+    used: result.usedQuota / divisor,
+    requestCount: result.requestCount,
+    quotaPerUnit: divisor,
+    currency: result.displayInCurrency ? "$" : "",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 async function ensureJustWokerCheckin(context, page, log) {
   log("info", "justwoker_start", "开始 JustDoWork 公益站签到流程");
 
@@ -295,15 +341,22 @@ async function ensureJustWokerCheckin(context, page, log) {
   log("info", "justwoker_dashboard_loaded", "已进入 JustDoWork 控制台，签到自动触发");
   await new Promise((resolve) => setTimeout(resolve, 3000));
 
+  // 读取余额
+  const balance = await readJustWokerBalance(page).catch((error) => {
+    log("warn", "justwoker_balance_failed", `JustDoWork 余额读取失败：${error.message}`, { error: error.message });
+    return null;
+  });
+  if (balance) log("info", "justwoker_balance", `JustDoWork 余额已更新：${balance.currency}${balance.balance.toFixed(2)}`);
+
   try {
     await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/usage-logs/common`, 60_000);
     const logText = await page.evaluate(() => document.body.innerText);
     const hasCheckinLog = /用户签到|签到成功|获得额度/.test(logText);
     log("info", "justwoker_verify", hasCheckinLog ? "JustDoWork 签到验证成功（日志中包含签到记录）" : "JustDoWork 签到验证完成（未在当前页找到签到记录，可能今日已签到）", { hasCheckinLog });
-    return { checkedIn: hasCheckinLog, site: "justwoker" };
+    return { checkedIn: hasCheckinLog, site: "justwoker", balance };
   } catch (error) {
     log("warn", "justwoker_verify_failed", `JustDoWork 签到验证失败：${error.message}`, { error: error.message });
-    return { checkedIn: true, site: "justwoker", warning: "签到可能已成功，但验证失败" };
+    return { checkedIn: true, site: "justwoker", balance, warning: "签到可能已成功，但验证失败" };
   }
 }
 
@@ -428,7 +481,7 @@ export async function runCheckin({ profileDir, baseUrl, headless, log, githubCoo
   }
 }
 
-export async function getAccountBalance({ profileDir, baseUrl, headless = true }) {
+export async function getAccountBalance({ profileDir, baseUrl, headless = true, githubCookies = [] }) {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless,
@@ -439,8 +492,39 @@ export async function getAccountBalance({ profileDir, baseUrl, headless = true }
   const page = context.pages()[0] ?? (await context.newPage());
 
   try {
-    await gotoWithRetry(page, `${baseUrl}/console`, 60_000);
-    return await readAccountBalance(page);
+    if (githubCookies.length) {
+      await context.addCookies(githubCookies);
+    }
+
+    const results = {};
+
+    // AgentRouter 余额
+    try {
+      await gotoWithRetry(page, `${baseUrl}/console`, 60_000);
+      const agentRouterBalance = await readAccountBalance(page);
+      results.agentrouter = agentRouterBalance;
+    } catch (error) {
+      // AgentRouter 余额获取失败不阻塞 JustDoWork
+    }
+
+    // JustDoWork 余额
+    try {
+      await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/dashboard/overview`, 60_000);
+      // 等待页面加载和自动刷新 token
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const justwokerBalance = await readJustWokerBalance(page);
+      results.justwoker = justwokerBalance;
+    } catch (error) {
+      // JustDoWork 余额获取失败
+    }
+
+    // 返回多站点余额；向后兼容：如果有 agentrouter 余额也放到顶层
+    return {
+      agentrouter: results.agentrouter || null,
+      justwoker: results.justwoker || null,
+      // 向后兼容字段
+      ...(results.agentrouter || {}),
+    };
   } finally {
     await context.close();
   }
