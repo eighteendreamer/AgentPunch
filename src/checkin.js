@@ -9,21 +9,12 @@ export class AuthRequiredError extends Error {
 
 const GITHUB_CLIENT_ID = "Ov23lidtiR4LeVZvVRNL";
 
-function isAgentRouterCallback(value) {
-  try {
-    const url = new URL(value);
-    return url.origin === "https://agentrouter.org" && url.pathname === "/oauth/github";
-  } catch {
-    return false;
-  }
-}
-
-function domesticSessionCookie(cookie, baseUrl) {
-  if (!cookie || cookie.name !== "session") return null;
-  const hostname = new URL(baseUrl).hostname;
-  const { name, value, path: cookiePath, expires, httpOnly, secure, sameSite } = cookie;
-  return { name, value, domain: hostname, path: cookiePath || "/", expires, httpOnly, secure, sameSite };
-}
+// ---------------------------------------------------------------------------
+// 站点注册表 —— 每个公益站是一个独立的签到模块
+// 每个模块导出 { id, name, run(context, page, githubCookies, log) }
+// run 抛出 AuthRequiredError 表示 GitHub 登录态失效（会终止所有站点）
+// run 抛出其他错误仅影响当前站点
+// ---------------------------------------------------------------------------
 
 async function withRetry(operation, attempts = 3) {
   let lastError;
@@ -75,32 +66,49 @@ async function getJson(page, url, options = {}) {
   return result;
 }
 
-async function clearAgentRouterState(context, page, origins, log) {
-  for (const origin of origins) {
-    try {
-      await gotoWithRetry(page, origin);
-      const logout = await getJson(page, "/api/user/logout");
-      log("info", "logout", `站点登出请求已完成：${origin}`, {
-        status: logout.status,
-        success: logout.body?.success,
-      });
-    } catch (error) {
-      log("warn", "logout", `站点原会话可能已失效，继续清理：${origin}`, { error: error.message });
-    }
+// ---------------------------------------------------------------------------
+// 站点 1: AgentRouter (ps.air-outer.com)
+// ---------------------------------------------------------------------------
 
-    await page
-      .evaluate(() => {
-        localStorage.clear();
-        sessionStorage.clear();
-      })
-      .catch(() => {});
-    const hostname = new URL(origin).hostname.replaceAll(".", "\\.");
-    await context.clearCookies({ domain: new RegExp(`(^|\\.)${hostname}$`) });
+function isAgentRouterCallback(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === "https://agentrouter.org" && url.pathname === "/oauth/github";
+  } catch {
+    return false;
   }
-  log("info", "state_cleared", `已清理 ${origins.join("、")} 的 Cookie 和 Web Storage`);
 }
 
-async function ensureGithubOAuth(context, page, baseUrl, log) {
+function domesticSessionCookie(cookie, baseUrl) {
+  if (!cookie || cookie.name !== "session") return null;
+  const hostname = new URL(baseUrl).hostname;
+  const { name, value, path: cookiePath, expires, httpOnly, secure, sameSite } = cookie;
+  return { name, value, domain: hostname, path: cookiePath || "/", expires, httpOnly, secure, sameSite };
+}
+
+async function clearSiteState(context, page, origin, log, options = {}) {
+  const { logoutApi = null, siteLabel = origin } = options;
+  try {
+    await gotoWithRetry(page, origin);
+    if (logoutApi) {
+      const logout = await getJson(page, logoutApi);
+      log("info", "logout", `${siteLabel} 登出请求已完成`, { status: logout.status, success: logout.body?.success });
+    }
+  } catch (error) {
+    log("warn", "logout", `${siteLabel} 原会话可能已失效，继续清理`, { error: error.message });
+  }
+  await page
+    .evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+    })
+    .catch(() => {});
+  const hostname = new URL(origin).hostname.replaceAll(".", "\\.");
+  await context.clearCookies({ domain: new RegExp(`(^|\\.)${hostname}$`) });
+  log("info", "state_cleared", `${siteLabel} 的 Cookie 和 Web Storage 已清理`);
+}
+
+async function ensureAgentRouterLogin(context, page, baseUrl, log) {
   await gotoWithRetry(page, `${baseUrl}/login`);
   const stateResponse = await withRetry(() => getJson(page, "/api/oauth/state?mode=login"));
   if (!stateResponse.ok || !stateResponse.body?.success || !stateResponse.body?.data) {
@@ -150,7 +158,7 @@ async function ensureGithubOAuth(context, page, baseUrl, log) {
   if (page.url().startsWith("https://github.com/login")) {
     await cleanupOAuthCapture();
     log("warn", "github_auth_required", "GitHub 登录态已失效，需要重新绑定账号");
-    throw new AuthRequiredError("GitHub 登录态已失效，请在设置页点击“切换账号”重新绑定");
+    throw new AuthRequiredError("GitHub 登录态已失效，请在设置页点击\u201c切换账号\u201d重新绑定");
   }
   log("info", "github_auth_verified", `GitHub 在线登录验证通过${githubUsername ? `：@${githubUsername}` : ""}`);
   log("info", "github_oauth_page", "GitHub OAuth 授权页面已加载");
@@ -252,6 +260,94 @@ async function readAccountBalance(page, knownUser = null) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 站点 2: JustDoWork (api.justwoker.icu)
+// ---------------------------------------------------------------------------
+
+const JUSTWOKER_BASE_URL = "https://api.justwoker.icu";
+
+async function ensureJustWokerCheckin(context, page, log) {
+  log("info", "justwoker_start", "开始 JustDoWork 公益站签到流程");
+
+  await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/sign-in`);
+  log("info", "justwoker_signin_page", "已加载 JustDoWork 登录页面");
+
+  const currentUrl = page.url();
+  if (currentUrl.includes("/dashboard")) {
+    log("info", "justwoker_already_logged_in", "已检测到 JustDoWork 登录态，直接进入控制台");
+  } else {
+    const githubButton = page.locator('button:has-text("GitHub")');
+    await githubButton.first().click({ timeout: 10_000 });
+    log("info", "justwoker_github_click", "已点击 GitHub 登录按钮");
+
+    await page.waitForURL(/\/dashboard\/overview|\/sign-in/, { timeout: 60_000 }).catch(() => {});
+
+    if (page.url().includes("/sign-in")) {
+      log("warn", "justwoker_auth_pending", "GitHub OAuth 授权可能需要确认");
+      await page.waitForURL(/\/dashboard/, { timeout: 30_000 }).catch(() => {});
+    }
+  }
+
+  if (!page.url().includes("/dashboard")) {
+    await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/dashboard/overview`, 60_000);
+  }
+
+  log("info", "justwoker_dashboard_loaded", "已进入 JustDoWork 控制台，签到自动触发");
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+
+  try {
+    await gotoWithRetry(page, `${JUSTWOKER_BASE_URL}/usage-logs/common`, 60_000);
+    const logText = await page.evaluate(() => document.body.innerText);
+    const hasCheckinLog = /用户签到|签到成功|获得额度/.test(logText);
+    log("info", "justwoker_verify", hasCheckinLog ? "JustDoWork 签到验证成功（日志中包含签到记录）" : "JustDoWork 签到验证完成（未在当前页找到签到记录，可能今日已签到）", { hasCheckinLog });
+    return { checkedIn: hasCheckinLog, site: "justwoker" };
+  } catch (error) {
+    log("warn", "justwoker_verify_failed", `JustDoWork 签到验证失败：${error.message}`, { error: error.message });
+    return { checkedIn: true, site: "justwoker", warning: "签到可能已成功，但验证失败" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 站点注册表
+// ---------------------------------------------------------------------------
+
+const SITES = [
+  {
+    id: "agentrouter",
+    name: "AgentRouter",
+    origins: [process.env.AGENT_ROUTER_BASE_URL?.replace(/\/$/, "") || "https://ps.air-outer.com"],
+    async run({ context, page, githubCookies, baseUrl, log }) {
+      const origin = baseUrl.replace(/\/$/, "");
+      await clearSiteState(context, page, origin, log, { logoutApi: "/api/user/logout", siteLabel: "AgentRouter" });
+      const user = await ensureAgentRouterLogin(context, page, origin, log);
+      const balance = await readAccountBalance(page, user).catch((error) => {
+        log("warn", "balance", "AgentRouter 签到完成，但余额快照暂时无法更新", { error: error.message });
+        return null;
+      });
+      return {
+        checkedIn: Boolean(user?.checked_in),
+        userId: user?.id ?? null,
+        username: user?.username ?? null,
+        balance,
+      };
+    },
+  },
+  {
+    id: "justwoker",
+    name: "JustDoWork",
+    origins: ["https://api.justwoker.icu"],
+    async run({ context, page, log }) {
+      // 清理旧状态（不调用 logout API，只清理 cookie/storage）
+      await clearSiteState(context, page, JUSTWOKER_BASE_URL, log, { siteLabel: "JustDoWork" });
+      return await ensureJustWokerCheckin(context, page, log);
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
+// 多站点签到主函数
+// ---------------------------------------------------------------------------
+
 export async function runCheckin({ profileDir, baseUrl, headless, log, githubCookies = [] }) {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
@@ -267,18 +363,64 @@ export async function runCheckin({ profileDir, baseUrl, headless, log, githubCoo
       await context.addCookies(githubCookies);
       log("info", "github_session_restored", "已从 Windows 安全存储恢复 GitHub 会话");
     }
-    await clearAgentRouterState(context, page, [baseUrl], log);
-    const user = await ensureGithubOAuth(context, page, baseUrl, log);
-    const balance = await readAccountBalance(page, user).catch((error) => {
-      log("warn", "balance", "签到完成，但余额快照暂时无法更新", { error: error.message });
-      return null;
-    });
+
+    const siteResults = [];
+    let authFailed = false;
+
+    for (const site of SITES) {
+      if (authFailed) {
+        siteResults.push({ site: site.id, name: site.name, status: "skipped", message: "GitHub 登录态已失效，已跳过" });
+        continue;
+      }
+
+      // 为每个站点创建带 site 标识的 log 包装函数
+      const siteLog = (level, event, message, details) => {
+        log(level, event, message, details, site.id);
+        console.log(`[${level}] [${site.name}] ${event}: ${message}`);
+      };
+
+      log("info", `site_${site.id}_start`, `开始 ${site.name} 签到`, null, site.id);
+      try {
+        const result = await site.run({ context, page, githubCookies, baseUrl, log: siteLog });
+        siteResults.push({
+          site: site.id,
+          name: site.name,
+          status: "success",
+          checkedIn: result.checkedIn ?? false,
+          message: result.checkedIn ? "签到成功" : "登录成功",
+          data: result,
+        });
+        log("info", `site_${site.id}_success`, `${site.name} 签到完成`, null, site.id);
+      } catch (error) {
+        if (error instanceof AuthRequiredError) {
+          authFailed = true;
+          siteResults.push({ site: site.id, name: site.name, status: "auth_required", message: error.message });
+          log("error", `site_${site.id}_auth_required`, `${site.name}：${error.message}`, null, site.id);
+        } else {
+          siteResults.push({ site: site.id, name: site.name, status: "failure", message: error.message });
+          log("error", `site_${site.id}_failed`, `${site.name} 签到失败：${error.message}`, { error: error.message }, site.id);
+        }
+      }
+    }
+
     const refreshedGithubCookies = await context.cookies("https://github.com");
+
+    // 汇总结果
+    const agentRouterResult = siteResults.find((r) => r.site === "agentrouter");
+    const anySuccess = siteResults.some((r) => r.status === "success");
+    const allFailed = siteResults.every((r) => r.status === "failure" || r.status === "auth_required");
+
     return {
-      checkedIn: Boolean(user?.checked_in),
-      userId: user?.id ?? null,
-      username: user?.username ?? null,
-      balance,
+      // 向后兼容：AgentRouter 的字段仍然在顶层
+      checkedIn: agentRouterResult?.data?.checkedIn ?? false,
+      userId: agentRouterResult?.data?.userId ?? null,
+      username: agentRouterResult?.data?.username ?? null,
+      balance: agentRouterResult?.data?.balance ?? null,
+      // 新增：多站点结果
+      sites: siteResults,
+      // 整体状态：只要有一个成功就算成功
+      overallSuccess: anySuccess,
+      overallStatus: authFailed ? "auth_required" : (allFailed ? "failure" : "success"),
       githubCookies: refreshedGithubCookies,
     };
   } finally {

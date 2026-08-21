@@ -196,10 +196,21 @@ async function getStatus() {
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new CheckinDatabase(dbFile);
   const runs = db.recentRuns(30);
-  const balance = db.latestAccountSnapshot();
+  const balanceSnapshots = db.latestAccountSnapshot();
   db.close();
   const settings = readSettings();
   const authState = readAuthState();
+  // 兼容：如果返回的是单条快照对象（旧数据），转换为 { agentrouter: snapshot } 格式
+  let balance = null;
+  if (balanceSnapshots) {
+    if (balanceSnapshots.balance !== undefined) {
+      // 旧格式：单条快照
+      balance = { agentrouter: balanceSnapshots };
+    } else {
+      // 新格式：{ siteId: snapshot }
+      balance = balanceSnapshots;
+    }
+  }
   return {
     runs,
     latestRun: runs[0] || null,
@@ -252,7 +263,16 @@ async function refreshBalance() {
     const db = new CheckinDatabase(dbFile);
     const data = db.latestAccountSnapshot();
     db.close();
-    return data ? { ok: true, data } : { ok: false, error: "余额暂时无法更新" };
+    // 兼容：如果返回的是单条快照对象（旧格式），包装为 { agentrouter: snapshot }
+    let balanceData = null;
+    if (data) {
+      if (data.balance !== undefined) {
+        balanceData = { agentrouter: data };
+      } else {
+        balanceData = data;
+      }
+    }
+    return balanceData ? { ok: true, data: balanceData } : { ok: false, error: "余额暂时无法更新" };
   })().finally(() => {
     balanceRefreshPromise = null;
   });

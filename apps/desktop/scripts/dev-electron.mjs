@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import electronPath from "electron";
+import { createRequire } from "node:module";
+
+// 兼容 Node.js v24+：不能用 ESM import 方式导入 electron，
+// 因为它会尝试执行 electron 入口脚本而非返回 exe 路径。
+const require = createRequire(import.meta.url);
+const electronPath = require("electron");
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const electronRoot = path.join(desktopRoot, "electron");

@@ -89,3 +89,21 @@ test("logs are returned newest first with run context", () => {
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("logs can be tagged with a site identifier for multi-site checkin", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-router-site-"));
+  const db = new CheckinDatabase(path.join(dir, "test.sqlite3"));
+  const runId = db.beginRun("2026-08-13");
+  db.log(runId, "info", "site_agentrouter_start", "开始 AgentRouter 签到", null, "agentrouter");
+  db.log(runId, "info", "site_justwoker_start", "开始 JustDoWork 签到", null, "justwoker");
+  db.log(runId, "error", "site_justwoker_failed", "JustDoWork 签到失败", { error: "timeout" }, "justwoker");
+  const logs = db.recentLogs(10);
+  assert.equal(logs.length, 3);
+  const justwokerLogs = logs.filter((l) => l.site === "justwoker");
+  assert.equal(justwokerLogs.length, 2);
+  const agentrouterLogs = logs.filter((l) => l.site === "agentrouter");
+  assert.equal(agentrouterLogs.length, 1);
+  assert.equal(logs[0].site, "justwoker");
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

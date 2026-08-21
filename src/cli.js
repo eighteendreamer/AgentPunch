@@ -148,10 +148,33 @@ async function run() {
       githubCookies: secret?.type === "github-session" ? secret.cookies : [],
     });
     sendSecretMessage({ type: "github-session", cookies: persistentGithubCookies(result.githubCookies || []) });
+    // 按站点保存余额快照
+    for (const siteResult of result.sites || []) {
+      if (siteResult.status === "success" && siteResult.data?.balance) {
+        db.saveAccountSnapshot(siteResult.data.balance, siteResult.site);
+      }
+    }
+    // 向后兼容：AgentRouter 余额仍然保存在无 site 字段的记录中
     if (result.balance) db.saveAccountSnapshot(result.balance);
-    const message = result.checkedIn ? "签到成功，新增额度已到账" : "登录成功，但站点未返回 checked_in=true";
+
+    // 生成多站点签到摘要
+    const siteMessages = (result.sites || []).map((s) => {
+      if (s.status === "success") {
+        return `${s.name}: ${s.checkedIn ? "✅ 签到成功" : "✅ 登录成功"}`;
+      }
+      if (s.status === "skipped") {
+        return `${s.name}: ⏭️ 已跳过`;
+      }
+      if (s.status === "auth_required") {
+        return `${s.name}: ❌ 登录失效`;
+      }
+      return `${s.name}: ❌ 签到失败`;
+    });
+    const summary = siteMessages.length ? siteMessages.join(" | ") : "签到完成";
+    const message = result.overallSuccess ? summary : summary;
+
     const { githubCookies: _githubCookies, ...publicResult } = result;
-    db.finishRun(runId, { status: "success", checkedIn: result.checkedIn, message, details: publicResult });
+    db.finishRun(runId, { status: result.overallStatus === "auth_required" ? "auth_required" : "success", checkedIn: result.checkedIn, message, details: publicResult });
     log("info", "complete", message, publicResult);
     console.log(message);
   } catch (error) {
@@ -178,6 +201,8 @@ async function balance() {
       headless: process.env.AGENT_ROUTER_HEADLESS !== "false",
     });
     db.saveAccountSnapshot(snapshot);
+    // 向后兼容：也以 agentrouter 站点身份保存
+    db.saveAccountSnapshot(snapshot, "agentrouter");
     console.log(JSON.stringify({
       balance: snapshot.balance,
       used: snapshot.used,

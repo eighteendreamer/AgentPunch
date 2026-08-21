@@ -35,6 +35,11 @@ function statusLabel(status) {
   return { success: "成功", failure: "失败", auth_required: "需要登录", running: "运行中" }[status] || status || "暂无";
 }
 
+function siteLabel(site) {
+  if (!site) return "全局";
+  return { agentrouter: "AgentRouter", justwoker: "JustDoWork" }[site] || site;
+}
+
 function displayRunMessage(message) {
   if (!message) return "—";
   if (/ERR_CONNECTION_RESET/i.test(message)) return "访问 GitHub OAuth 时连接被重置，请检查网络后重试";
@@ -75,6 +80,10 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
   const success = status?.successfulToday;
   const taskOn = status?.task?.installed;
   const githubUsername = status?.account?.githubUsername;
+  // balance 是 { agentrouter: { balance, used, currency, ... }, justwoker: { ... } } 格式
+  const siteBalances = balance?.ok ? balance.data : (status?.balance || {});
+  const siteList = Object.entries(siteBalances || {}).filter(([, v]) => v && v.balance !== undefined);
+  const hasAnyBalance = siteList.length > 0;
   return (
     <main className="page home-page">
       <header className="page-header">
@@ -92,9 +101,14 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
         </div>
         <div className="hero-side">
           <div className="balance-summary">
-            <span>当前余额</span>
-            <strong>{balance?.ok ? `${balance.data.currency}${balance.data.balance.toFixed(2)}` : "—"}</strong>
-            <small>{balance?.ok ? `历史消耗 ${balance.data.currency}${balance.data.used.toFixed(2)}${balanceBusy ? " · 更新中" : ""}` : balanceBusy ? "正在后台获取余额" : balance?.error || (status?.initialized ? "余额尚未获取" : "绑定账号后可读取")}</small>
+            {hasAnyBalance ? siteList.map(([siteId, snap]) => (
+              <div key={siteId} className="balance-item">
+                <span className="balance-site-name">{siteLabel(siteId)}</span>
+                <strong>{snap.currency}{snap.balance != null ? snap.balance.toFixed(2) : "—"}</strong>
+                <small>消耗 {snap.currency}{snap.used != null ? snap.used.toFixed(2) : "—"}</small>
+              </div>
+            )) : <div className="balance-item"><span>当前余额</span><strong>—</strong><small>{balanceBusy ? "正在后台获取余额" : balance?.error || (status?.initialized ? "余额尚未获取" : "绑定账号后可读取")}</small></div>}
+            {balanceBusy && <div className="balance-updating"><LoaderCircle className="spin" size={13} />更新中</div>}
           </div>
           {!success && <button className="primary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}{setupBusy ? "账号切换中" : "立即签到"}</button>}
         </div>
@@ -116,19 +130,34 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
   );
 }
 
+function extractSiteTags(run) {
+  if (!run.details_json) return [];
+  try {
+    const details = JSON.parse(run.details_json);
+    if (Array.isArray(details.sites)) {
+      return details.sites.map((s) => ({ id: s.site, name: siteLabel(s.site), status: s.status }));
+    }
+  } catch {}
+  return [];
+}
+
 function HistoryPage({ runs }) {
   return (
     <main className="page">
       <header className="page-header"><div><h1>运行历史</h1><p>查看每次自动与手动签到的执行结果。</p></div></header>
       <section className="table-section">
-        <div className="table-head"><span>日期</span><span>开始时间</span><span>结果</span><span>签到</span><span>说明</span></div>
-        {(runs || []).map((run) => <div className="table-row" key={run.id}>
-          <span className="history-date">{run.local_date}</span>
-          <span className="history-time">{formatDate(run.started_at)}</span>
-          <span><i className={`mini-dot ${run.status}`} /><b className={`history-result ${run.status}`}>{statusLabel(run.status)}</b></span>
-          <span className={run.checked_in ? "checkin-result yes" : "checkin-result"}>{run.checked_in ? "已签到" : "—"}</span>
-          <span className="history-message" title={run.message}>{displayRunMessage(run.message)}</span>
-        </div>)}
+        <div className="table-head"><span>日期</span><span>开始时间</span><span>结果</span><span>站点</span><span>签到</span><span>说明</span></div>
+        {(runs || []).map((run) => {
+          const siteTags = extractSiteTags(run);
+          return <div className="table-row" key={run.id}>
+            <span className="history-date">{run.local_date}</span>
+            <span className="history-time">{formatDate(run.started_at)}</span>
+            <span><i className={`mini-dot ${run.status}`} /><b className={`history-result ${run.status}`}>{statusLabel(run.status)}</b></span>
+            <span className="history-sites">{siteTags.length ? siteTags.map((t) => <span key={t.id} className={`site-tag ${t.status}`}>{t.name}</span>) : "—"}</span>
+            <span className={run.checked_in ? "checkin-result yes" : "checkin-result"}>{run.checked_in ? "已签到" : "—"}</span>
+            <span className="history-message" title={run.message}>{displayRunMessage(run.message)}</span>
+          </div>;
+        })}
         {!runs?.length && <div className="empty-row large">还没有运行记录</div>}
       </section>
     </main>
@@ -185,10 +214,11 @@ function LogDialog({ value, onClose, onRefresh }) {
       </header>
       {value.error ? <div className="log-dialog-error"><CircleAlert size={17} />{value.error}</div> : <div className="log-table-wrap">
         <div className="log-table">
-          <div className="log-table-head"><span>时间</span><span>级别</span><span>事件</span><span>运行</span><span>日志信息</span></div>
+          <div className="log-table-head"><span>时间</span><span>级别</span><span>站点</span><span>事件</span><span>运行</span><span>日志信息</span></div>
           {value.logs.map((log) => <div className="log-table-row" key={log.id}>
             <time dateTime={log.created_at}>{formatDate(log.created_at)}</time>
             <span><i className={`log-level-dot ${log.level}`} /><b className={`log-level ${log.level}`}>{levelLabel[log.level] || log.level}</b></span>
+            <span className="log-site">{siteLabel(log.site)}</span>
             <code>{log.event || "—"}</code>
             <span className="log-run">{log.local_date ? `${log.local_date} · #${log.run_id}` : "系统"}</span>
             <details className="log-message"><summary>{displayRunMessage(log.message)}</summary>{log.details_json && <pre>{log.details_json}</pre>}</details>
@@ -242,8 +272,10 @@ function App() {
     setBalanceBusy(true);
     try {
       const result = await api.refreshBalance();
-      if (result.ok) setBalance(result);
-      else setBalance((current) => current?.ok ? current : { ok: false, error: result.error || "余额暂时无法更新" });
+      if (result.ok) {
+        setBalance(result);
+        setStatus((current) => current ? { ...current, balance: result.data } : current);
+      } else setBalance((current) => current?.ok ? current : { ok: false, error: result.error || "余额暂时无法更新" });
       if (showToast) notify(result.ok ? "余额已更新" : result.error || "余额暂时无法更新", result.ok ? "ok" : "error");
     } catch (error) {
       setBalance((current) => current?.ok ? current : { ok: false, error: "余额暂时无法更新" });
