@@ -17,6 +17,7 @@ import {
   Logs,
   LockKeyhole,
   Play,
+  RefreshCw,
   Settings,
   ShieldCheck,
   Upload,
@@ -164,7 +165,7 @@ function HistoryPage({ runs }) {
   );
 }
 
-function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs }) {
+function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenData, onMigration, onOpenLogs, onCheckUpdate }) {
   const [form, setForm] = useState(status?.settings || { dailyTime: "09:00", headless: true });
   useEffect(() => setForm(status?.settings || form), [status?.settings]);
   const dirty =
@@ -192,6 +193,7 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
             <div className="setting-row"><div><strong>GitHub 账号</strong><p><span className={status?.initialized ? "account-dot connected" : "account-dot"} />{setupBusy ? setupPhase || "正在启动 GitHub 绑定流程。" : status?.initialized ? `${githubUsername ? `已绑定 @${githubUsername}，` : "已绑定，"}会话由 Windows 加密保存在本机。` : status?.authState?.valid === false ? "登录状态不可用，请重新绑定。" : "尚未完成首次绑定。"}</p></div><button className="secondary-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? <LoaderCircle className="spin" size={15} /> : null}{setupBusy ? setupPhase?.includes("验证") ? "验证中" : "登录中" : status?.initialized ? "切换账号" : "重新绑定"} {!setupBusy && <ExternalLink size={15} />}</button></div>
             <div className="setting-row"><div><strong>本地数据</strong><p className="path-text">{status?.dataDir}</p></div><button className="secondary-button" onClick={onOpenData}>打开目录 <ChevronRight size={15} /></button></div>
             <div className="setting-row migration-row"><div><strong>账号迁移</strong><p>加密导出 GitHub 登录状态、设置与运行历史。</p></div><div className="setting-actions"><button className="secondary-button" disabled={setupBusy} onClick={() => onMigration("import")}><Upload size={15} />导入</button><button className="secondary-button" onClick={() => onMigration("export")} disabled={setupBusy || !status?.initialized}><Download size={15} />导出</button></div></div>
+            <div className="setting-row"><div><strong>检查更新</strong><p>从 GitHub 仓库检查并下载最新版本。</p></div><button className="secondary-button" onClick={onCheckUpdate}><RefreshCw size={15} />检查更新</button></div>
           </div>
         </div>
       </section>
@@ -231,6 +233,45 @@ function LogDialog({ value, onClose, onRefresh }) {
   </div>;
 }
 
+function UpdateDialog({ value, onClose, onDownload, onInstall }) {
+  if (!value) return null;
+  const { checking, hasUpdate, latestVersion, releaseNotes, releaseUrl, downloading, downloadProgress, downloaded, error } = value;
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !checking && !downloading && onClose()}>
+    <section className="migration-dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
+      <button className="dialog-close" disabled={checking || downloading} onClick={onClose} aria-label="关闭"><X size={18} /></button>
+      <div className="dialog-icon"><RefreshCw size={23} /></div>
+      {checking ? <>
+        <h2 id="update-title">正在检查更新…</h2>
+        <p>正在从 GitHub 获取最新版本信息。</p>
+        <div className="update-loading"><LoaderCircle className="spin" size={28} /></div>
+      </> : error ? <>
+        <h2 id="update-title">检查更新失败</h2>
+        <p className="update-error-text">{error}</p>
+        <div className="dialog-actions"><button className="primary-button" onClick={onClose}>关闭</button></div>
+      </> : hasUpdate ? <>
+        <h2 id="update-title">发现新版本 v{latestVersion}</h2>
+        <p>当前版本 v{value.currentVersion}，新版本已发布。</p>
+        {releaseNotes && <div className="update-notes"><pre>{releaseNotes}</pre></div>}
+        {downloading ? <>
+          <div className="update-progress-bar"><div className="update-progress-fill" style={{ width: `${downloadProgress}%` }} /></div>
+          <p className="update-progress-text">正在下载… {downloadProgress}%</p>
+        </> : downloaded ? <>
+          <div className="dialog-note"><ShieldCheck size={15} /><span>下载完成，点击安装后应用将关闭并启动安装程序。</span></div>
+          <div className="dialog-actions"><button className="secondary-button" onClick={onClose}>稍后</button><button className="primary-button" onClick={onInstall}><Download size={17} />立即安装</button></div>
+        </> : <>
+          <div className="dialog-note"><ShieldCheck size={15} /><span>下载安装包后，退出应用并自动启动安装程序。</span></div>
+          <div className="dialog-actions"><button className="secondary-button" onClick={onClose}>稍后</button><button className="primary-button" onClick={onDownload}><Download size={17} />下载更新</button></div>
+          {releaseUrl && <a className="update-release-link" href="#" onClick={(e) => { e.preventDefault(); window.open(releaseUrl, "_blank"); }}>查看 Release 详情</a>}
+        </>}
+      </> : <>
+        <h2 id="update-title">已是最新版本</h2>
+        <p>当前版本 v{value.currentVersion}，无需更新。</p>
+        <div className="dialog-actions"><button className="primary-button" onClick={onClose}>关闭</button></div>
+      </>}
+    </section>
+  </div>;
+}
+
 function MigrationDialog({ value, onChange, onClose, onConfirm }) {
   if (!value) return null;
   const exporting = value.mode === "export";
@@ -259,6 +300,7 @@ function App() {
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupPhase, setSetupPhase] = useState(null);
   const [migration, setMigration] = useState(null);
+  const [updateDialog, setUpdateDialog] = useState(null);
   const [logDialog, setLogDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const notify = (message, tone = "ok") => { setToast({ message, tone }); setTimeout(() => setToast(null), 3600); };
@@ -309,6 +351,56 @@ function App() {
     return () => { active = false; };
   }, []);
   useEffect(() => api.onSetupProgress?.(({ message }) => setSetupPhase(message)), []);
+  useEffect(() => api.onUpdateProgress?.(({ progress }) => {
+    setUpdateDialog((current) => current ? { ...current, downloadProgress: progress } : current);
+  }), []);
+
+  async function checkUpdate() {
+    setUpdateDialog({ checking: true, currentVersion: status?.appVersion || "—" });
+    try {
+      const result = await api.checkUpdate();
+      if (result.ok) {
+        setUpdateDialog({
+          checking: false,
+          hasUpdate: result.hasUpdate,
+          latestVersion: result.latestVersion,
+          releaseNotes: result.releaseNotes,
+          releaseUrl: result.releaseUrl,
+          currentVersion: status?.appVersion || "—",
+          error: result.error || null,
+          downloading: false,
+          downloadProgress: 0,
+          downloaded: false,
+        });
+      } else {
+        setUpdateDialog({ checking: false, hasUpdate: false, currentVersion: status?.appVersion || "—", error: result.error || "检查更新失败" });
+      }
+    } catch (error) {
+      setUpdateDialog({ checking: false, hasUpdate: false, currentVersion: status?.appVersion || "—", error: error.message || "检查更新失败" });
+    }
+  }
+  async function downloadUpdate() {
+    setUpdateDialog((current) => current ? { ...current, downloading: true, downloadProgress: 0 } : current);
+    try {
+      const result = await api.downloadUpdate();
+      if (result.ok) {
+        setUpdateDialog((current) => current ? { ...current, downloading: false, downloaded: true } : current);
+        notify("更新包下载完成", "ok");
+      } else {
+        setUpdateDialog((current) => current ? { ...current, downloading: false, error: result.error || "下载失败" } : current);
+      }
+    } catch (error) {
+      setUpdateDialog((current) => current ? { ...current, downloading: false, error: error.message || "下载失败" } : current);
+    }
+  }
+  async function installUpdateNow() {
+    try {
+      const result = await api.installUpdate();
+      if (!result.ok) notify(result.error || "安装启动失败", "error");
+    } catch (error) {
+      notify(error.message || "安装启动失败", "error");
+    }
+  }
 
   async function runNow() {
     if (busy || setupBusy) return;
@@ -422,9 +514,10 @@ function App() {
     <div className="workspace">
       {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} />}
       {page === "history" && <HistoryPage runs={status?.runs} />}
-      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} />}
+      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} />}
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
+    <UpdateDialog value={updateDialog} onClose={() => setUpdateDialog(null)} onDownload={downloadUpdate} onInstall={installUpdateNow} />
     <LogDialog value={logDialog} onClose={() => setLogDialog(null)} onRefresh={loadLogs} />
     {toast && <div className={`toast ${toast.tone}`}>{toast.tone === "error" ? <CircleAlert size={18} /> : <CheckCircle2 size={18} />}<span>{toast.message}</span></div>}
   </div>;

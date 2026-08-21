@@ -17,4 +17,12 @@ contextBridge.exposeInMainWorld("agentPunch", {
   openDataFolder: () => ipcRenderer.invoke("agent:open-data-folder"),
   exportData: (password) => ipcRenderer.invoke("agent:export-data", { password }),
   importData: (password) => ipcRenderer.invoke("agent:import-data", { password }),
+  checkUpdate: () => ipcRenderer.invoke("agent:check-update"),
+  downloadUpdate: () => ipcRenderer.invoke("agent:download-update"),
+  installUpdate: () => ipcRenderer.invoke("agent:install-update"),
+  onUpdateProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("agent:update-progress", listener);
+    return () => ipcRenderer.removeListener("agent:update-progress", listener);
+  },
 });

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkForUpdates, downloadInstaller, installUpdate } from "./updater.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(here, "..");
@@ -389,6 +390,60 @@ ipcMain.handle("agent:import-data", async (_event, { password }) => {
   if (selected.canceled || !selected.filePaths[0]) return { ok: false, canceled: true };
   const result = await runNodeCli(["backup-import", selected.filePaths[0]], {}, `${password}\n`);
   return result.ok ? { ok: true } : { ok: false, error: migrationError(result.output) };
+});
+
+// --- 自动更新 ---
+let updateState = { checking: false, downloading: false, info: null };
+
+ipcMain.handle("agent:check-update", async () => {
+  if (updateState.checking || updateState.downloading) {
+    return { ok: false, error: "更新操作进行中" };
+  }
+  updateState.checking = true;
+  try {
+    const result = await checkForUpdates(desktopPackage.version);
+    updateState.info = result;
+    return { ok: true, ...result };
+  } catch (error) {
+    return { ok: false, error: error.message || "检查更新失败" };
+  } finally {
+    updateState.checking = false;
+  }
+});
+
+ipcMain.handle("agent:download-update", async (event) => {
+  if (!updateState.info?.hasUpdate) {
+    return { ok: false, error: "没有可用的新版本" };
+  }
+  if (updateState.downloading) {
+    return { ok: false, error: "正在下载中" };
+  }
+  updateState.downloading = true;
+  try {
+    const filePath = await downloadInstaller(updateState.info.downloadUrl, (progress) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send("agent:update-progress", { progress });
+      }
+    });
+    updateState.info.installerPath = filePath;
+    return { ok: true, filePath };
+  } catch (error) {
+    return { ok: false, error: error.message || "下载失败" };
+  } finally {
+    updateState.downloading = false;
+  }
+});
+
+ipcMain.handle("agent:install-update", async () => {
+  if (!updateState.info?.installerPath) {
+    return { ok: false, error: "安装包未下载" };
+  }
+  try {
+    installUpdate(updateState.info.installerPath);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message || "启动安装失败" };
+  }
 });
 
 app.whenReady().then(() => {

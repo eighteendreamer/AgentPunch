@@ -1,6 +1,6 @@
 {
   "name": "agentpunch-desktop",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "private": true,
   "type": "module",
   "description": "AgentPunch 自动签到桌面客户端",
@@ -10,7 +10,8 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 node scripts/dev-electron.mjs\"",
     "build": "vite build",
     "start": "npm run build && electron electron/main.mjs",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis",
+    "release": "npm run build && electron-builder --win nsis --publish always"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.5",
@@ -57,6 +58,12 @@
       "createStartMenuShortcut": true,
       "shortcutName": "AgentPunch",
       "include": "build/installer.nsh"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "AgentPunch",
+      "repo": "AgentPunch",
+      "releaseType": "release"
     }
   }
 }
