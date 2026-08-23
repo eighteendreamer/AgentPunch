@@ -340,7 +340,7 @@ ipcMain.handle("agent:get-logs", (_event, { site } = {}) => {
       if (!/(?:github_auth_required|github_binding_failure)/i.test(entry.event) && !/npm run setup|GitHub 登录态已失效|GitHub 登录状态已失效/i.test(entry.message)) return entry;
       return {
         ...entry,
-        message: "GitHub 登录状态不可用，请在设置页点击"切换账号"重新绑定",
+        message: "GitHub 登录状态不可用，请在设置页点击「切换账号」重新绑定",
         details_json: null,
       };
     });
