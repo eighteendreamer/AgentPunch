@@ -394,13 +394,29 @@ async function ensureAnyRouterLogin(context, page, log, credentials) {
   log("info", "anyrouter_login_page", "已加载 AnyRouter 登录页面");
 
   // 等待页面加载（AnyRouter 有 WAF 保护，需要等待 JS 执行）
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
 
   // 检查是否已经在登录状态（被重定向到控制台）
   const currentUrl = page.url();
   if (currentUrl.includes("/console")) {
     log("info", "anyrouter_already_logged_in", "已检测到 AnyRouter 登录态");
     return true;
+  }
+
+  // 关闭公告弹窗（如果存在）
+  try {
+    const closeButtons = await page.locator('button:has-text("关闭公告"), button:has-text("今日关闭")').all();
+    for (const btn of closeButtons) {
+      const text = await btn.textContent();
+      if (text?.includes('关闭') || text?.includes('今日')) {
+        await btn.click();
+        log("info", "anyrouter_close_announcement", "已关闭公告弹窗");
+        await page.waitForTimeout(500);
+        break;
+      }
+    }
+  } catch {
+    // 忽略关闭弹窗的错误
   }
 
   // 点击"使用邮箱或用户名登录"按钮
@@ -415,44 +431,55 @@ async function ensureAnyRouterLogin(context, page, log, credentials) {
   // 等待表单加载
   await page.waitForTimeout(1000);
 
-  // 填写用户名和密码
-  const usernameInput = page.locator('input[placeholder*="用户名"], input[placeholder*="邮箱"], input[name="username"], input[name="email"], input[type="text"]').first();
-  const passwordInput = page.locator('input[placeholder*="密码"], input[name="password"], input[type="password"]').first();
-
-  await usernameInput.fill(credentials.username);
-  await passwordInput.fill(credentials.password);
-  log("info", "anyrouter_credentials_filled", "已填写用户名和密码");
-
-  // 点击登录按钮
-  const loginButton = page.locator('button:has-text("继续"), button:has-text("登录"), button[type="submit"]').first();
-  await loginButton.click();
-  log("info", "anyrouter_login_submit", "已提交登录表单");
-
-  // 等待登录完成（跳转到控制台或出现错误）
-  try {
-    await page.waitForURL(/\/console/, { timeout: 30_000 });
-    log("info", "anyrouter_login_success", "AnyRouter 登录成功");
-    return true;
-  } catch (error) {
-    // 检查是否有错误提示
-    const errorText = await page.evaluate(() => {
-      const errorEl = document.querySelector('.error, .alert, [role="alert"]');
-      return errorEl?.textContent || '';
-    });
-    if (errorText) {
-      throw new Error(`AnyRouter 登录失败：${errorText}`);
+  // 使用 API 直接登录（比模拟表单更可靠）
+  log("info", "anyrouter_api_login", "调用登录 API");
+  const loginResult = await page.evaluate(async ({ username, password }) => {
+    try {
+      const response = await fetch('/api/user/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
+        credentials: 'include'
+      });
+      const data = await response.json();
+      return { success: data.success, data, status: response.status };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
-    throw new Error(`AnyRouter 登录超时：${error.message}`);
+  }, { username: credentials.username, password: credentials.password });
+
+  if (!loginResult.success) {
+    throw new Error(`AnyRouter 登录失败：${loginResult.data?.message || loginResult.error || '未知错误'}`);
   }
+
+  const userId = loginResult.data?.data?.id;
+  const userData = loginResult.data?.data;
+  log("info", "anyrouter_login_success", "AnyRouter 登录成功", { userId });
+
+  // 将用户数据存储在 localStorage 中供后续使用（AnyRouter 使用 localStorage.getItem("user") 检查登录状态）
+  await page.evaluate((user) => {
+    localStorage.setItem("user", JSON.stringify(user));
+    window.__anyrouter_user_id = user.id;
+  }, userData);
+
+  // 刷新页面以应用登录状态
+  await page.goto(`${ANYROUTER_BASE_URL}/console`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+
+  return userId;
 }
 
-async function readAnyRouterBalance(page) {
-  const result = await page.evaluate(async () => {
+async function readAnyRouterBalance(page, userId) {
+  const result = await page.evaluate(async (uid) => {
     try {
       // 尝试获取余额信息
       const response = await fetch("/api/user/self", {
         credentials: "include",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          "New-Api-User": uid?.toString() || ""
+        },
       });
       const data = await response.json();
       if (!data?.success) return { error: data?.message || "获取余额失败" };
@@ -467,7 +494,7 @@ async function readAnyRouterBalance(page) {
     } catch (error) {
       return { error: error.message };
     }
-  });
+  }, userId);
 
   if (result?.error) throw new Error(result.error);
   const divisor = result.quotaPerUnit > 0 ? result.quotaPerUnit : 500000;
@@ -484,18 +511,18 @@ async function readAnyRouterBalance(page) {
 async function ensureAnyRouterCheckin(context, page, log, credentials) {
   log("info", "anyrouter_checkin_start", "开始 AnyRouter 签到流程");
 
-  // 登录
-  await ensureAnyRouterLogin(context, page, log, credentials);
+  // 登录并获取 userId
+  const userId = await ensureAnyRouterLogin(context, page, log, credentials);
 
   // 访问控制台页面（登录即签到）
   await gotoWithRetry(page, `${ANYROUTER_BASE_URL}/console`, 60_000);
-  log("info", "anyrouter_console_loaded", "已进入 AnyRouter 控制台");
+  log("info", "anyrouter_console_loaded", "已进入 Any Router 控制台");
 
   // 等待一段时间让签到自动触发
   await page.waitForTimeout(3000);
 
   // 读取余额
-  const balance = await readAnyRouterBalance(page).catch((error) => {
+  const balance = await readAnyRouterBalance(page, userId).catch((error) => {
     log("warn", "anyrouter_balance_failed", `AnyRouter 余额读取失败：${error.message}`, { error: error.message });
     return null;
   });
