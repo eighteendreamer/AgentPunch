@@ -17,8 +17,14 @@ const pendingProfileDir = path.join(dataDir, "browser-profile.pending");
 const previousProfileDir = path.join(dataDir, "browser-profile.previous");
 const dbFile = path.join(dataDir, "checkin.sqlite3");
 const accountFile = path.join(dataDir, "account.json");
+const credentialsFile = path.join(dataDir, "credentials.json");
 const lockFile = path.join(dataDir, "run.lock");
 const setupLockFile = path.join(dataDir, "setup.lock");
+
+function readCredentials() {
+  try { return JSON.parse(fs.readFileSync(credentialsFile, "utf8")); }
+  catch { return {}; }
+}
 
 let initialSecretMessage = null;
 try { initialSecretMessage = JSON.parse(fs.readFileSync(3, "utf8").trim()); }
@@ -140,12 +146,14 @@ async function run() {
       console.log(`[${level}] ${event}: ${message}`);
     };
     const secret = readSecretMessage();
+    const credentials = readCredentials();
     const result = await runCheckin({
       profileDir,
       baseUrl,
       headless: process.env.AGENT_ROUTER_HEADLESS !== "false",
       log,
       githubCookies: secret?.type === "github-session" ? secret.cookies : [],
+      credentials,
     });
     sendSecretMessage({ type: "github-session", cookies: persistentGithubCookies(result.githubCookies || []) });
     // 按站点保存余额快照

@@ -266,6 +266,12 @@ async function readAccountBalance(page, knownUser = null) {
 
 const JUSTWOKER_BASE_URL = "https://api.justwoker.icu";
 
+// ---------------------------------------------------------------------------
+// 站点 3: AnyRouter (anyrouter.top)
+// ---------------------------------------------------------------------------
+
+const ANYROUTER_BASE_URL = "https://anyrouter.top";
+
 async function readJustWokerBalance(page) {
   // 先主动刷新 JWT token（JustDoWork 使用 refresh cookie 换取新 access_token）
   await page.evaluate(async () => {
@@ -377,6 +383,139 @@ async function ensureJustWokerCheckin(context, page, log) {
 }
 
 // ---------------------------------------------------------------------------
+// AnyRouter 登录和签到
+// ---------------------------------------------------------------------------
+
+async function ensureAnyRouterLogin(context, page, log, credentials) {
+  log("info", "anyrouter_start", "开始 AnyRouter 登录流程");
+
+  // 访问登录页面
+  await gotoWithRetry(page, `${ANYROUTER_BASE_URL}/login`);
+  log("info", "anyrouter_login_page", "已加载 AnyRouter 登录页面");
+
+  // 等待页面加载（AnyRouter 有 WAF 保护，需要等待 JS 执行）
+  await page.waitForTimeout(3000);
+
+  // 检查是否已经在登录状态（被重定向到控制台）
+  const currentUrl = page.url();
+  if (currentUrl.includes("/console")) {
+    log("info", "anyrouter_already_logged_in", "已检测到 AnyRouter 登录态");
+    return true;
+  }
+
+  // 点击"使用邮箱或用户名登录"按钮
+  try {
+    const emailLoginButton = page.locator('button:has-text("邮箱或用户名"), button:has-text("使用 邮箱或用户名 登录")');
+    await emailLoginButton.first().click({ timeout: 10_000 });
+    log("info", "anyrouter_email_login_click", "已点击邮箱登录按钮");
+  } catch (error) {
+    log("warn", "anyrouter_email_login_skip", "未找到邮箱登录按钮，可能已在邮箱登录表单页面");
+  }
+
+  // 等待表单加载
+  await page.waitForTimeout(1000);
+
+  // 填写用户名和密码
+  const usernameInput = page.locator('input[placeholder*="用户名"], input[placeholder*="邮箱"], input[name="username"], input[name="email"], input[type="text"]').first();
+  const passwordInput = page.locator('input[placeholder*="密码"], input[name="password"], input[type="password"]').first();
+
+  await usernameInput.fill(credentials.username);
+  await passwordInput.fill(credentials.password);
+  log("info", "anyrouter_credentials_filled", "已填写用户名和密码");
+
+  // 点击登录按钮
+  const loginButton = page.locator('button:has-text("继续"), button:has-text("登录"), button[type="submit"]').first();
+  await loginButton.click();
+  log("info", "anyrouter_login_submit", "已提交登录表单");
+
+  // 等待登录完成（跳转到控制台或出现错误）
+  try {
+    await page.waitForURL(/\/console/, { timeout: 30_000 });
+    log("info", "anyrouter_login_success", "AnyRouter 登录成功");
+    return true;
+  } catch (error) {
+    // 检查是否有错误提示
+    const errorText = await page.evaluate(() => {
+      const errorEl = document.querySelector('.error, .alert, [role="alert"]');
+      return errorEl?.textContent || '';
+    });
+    if (errorText) {
+      throw new Error(`AnyRouter 登录失败：${errorText}`);
+    }
+    throw new Error(`AnyRouter 登录超时：${error.message}`);
+  }
+}
+
+async function readAnyRouterBalance(page) {
+  const result = await page.evaluate(async () => {
+    try {
+      // 尝试获取余额信息
+      const response = await fetch("/api/user/self", {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      const data = await response.json();
+      if (!data?.success) return { error: data?.message || "获取余额失败" };
+
+      return {
+        quota: Number(data.data?.quota || 0),
+        usedQuota: Number(data.data?.used_quota || 0),
+        requestCount: Number(data.data?.request_count || 0),
+        quotaPerUnit: 500000,
+        displayInCurrency: true,
+      };
+    } catch (error) {
+      return { error: error.message };
+    }
+  });
+
+  if (result?.error) throw new Error(result.error);
+  const divisor = result.quotaPerUnit > 0 ? result.quotaPerUnit : 500000;
+  return {
+    balance: result.quota / divisor,
+    used: result.usedQuota / divisor,
+    requestCount: result.requestCount,
+    quotaPerUnit: divisor,
+    currency: result.displayInCurrency ? "$" : "",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function ensureAnyRouterCheckin(context, page, log, credentials) {
+  log("info", "anyrouter_checkin_start", "开始 AnyRouter 签到流程");
+
+  // 登录
+  await ensureAnyRouterLogin(context, page, log, credentials);
+
+  // 访问控制台页面（登录即签到）
+  await gotoWithRetry(page, `${ANYROUTER_BASE_URL}/console`, 60_000);
+  log("info", "anyrouter_console_loaded", "已进入 AnyRouter 控制台");
+
+  // 等待一段时间让签到自动触发
+  await page.waitForTimeout(3000);
+
+  // 读取余额
+  const balance = await readAnyRouterBalance(page).catch((error) => {
+    log("warn", "anyrouter_balance_failed", `AnyRouter 余额读取失败：${error.message}`, { error: error.message });
+    return null;
+  });
+  if (balance) log("info", "anyrouter_balance", `AnyRouter 余额已更新：${balance.currency}${balance.balance.toFixed(2)}`);
+
+  // 访问日志页面验证签到
+  try {
+    await gotoWithRetry(page, `${ANYROUTER_BASE_URL}/console/log`, 60_000);
+    await page.waitForTimeout(2000);
+    const logText = await page.evaluate(() => document.body.innerText);
+    const hasCheckinLog = /签到|checkin|签到成功|获得额度/.test(logText);
+    log("info", "anyrouter_verify", hasCheckinLog ? "AnyRouter 签到验证成功（日志中包含签到记录）" : "AnyRouter 签到验证完成（未在当前页找到签到记录，可能今日已签到）", { hasCheckinLog });
+    return { checkedIn: hasCheckinLog, site: "anyrouter", balance };
+  } catch (error) {
+    log("warn", "anyrouter_verify_failed", `AnyRouter 签到验证失败：${error.message}`, { error: error.message });
+    return { checkedIn: true, site: "anyrouter", balance, warning: "签到可能已成功，但验证失败" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 站点注册表
 // ---------------------------------------------------------------------------
 
@@ -411,13 +550,26 @@ const SITES = [
       return await ensureJustWokerCheckin(context, page, log);
     },
   },
+  {
+    id: "anyrouter",
+    name: "AnyRouter",
+    origins: ["https://anyrouter.top"],
+    credentials: true, // 需要用户名密码
+    async run({ context, page, log, credentials }) {
+      await clearSiteState(context, page, ANYROUTER_BASE_URL, log, { siteLabel: "AnyRouter" });
+      if (!credentials?.anyrouter?.username || !credentials?.anyrouter?.password) {
+        throw new Error("AnyRouter 需要配置用户名和密码，请在设置中添加账号信息");
+      }
+      return await ensureAnyRouterCheckin(context, page, log, credentials.anyrouter);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
 // 多站点签到主函数
 // ---------------------------------------------------------------------------
 
-export async function runCheckin({ profileDir, baseUrl, headless, log, githubCookies = [] }) {
+export async function runCheckin({ profileDir, baseUrl, headless, log, githubCookies = [], credentials = {} }) {
   const context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless,
@@ -437,7 +589,7 @@ export async function runCheckin({ profileDir, baseUrl, headless, log, githubCoo
     let authFailed = false;
 
     for (const site of SITES) {
-      if (authFailed) {
+      if (authFailed && !site.credentials) {
         siteResults.push({ site: site.id, name: site.name, status: "skipped", message: "GitHub 登录态已失效，已跳过" });
         continue;
       }
@@ -450,7 +602,7 @@ export async function runCheckin({ profileDir, baseUrl, headless, log, githubCoo
 
       log("info", `site_${site.id}_start`, `开始 ${site.name} 签到`, null, site.id);
       try {
-        const result = await site.run({ context, page, githubCookies, baseUrl, log: siteLog });
+        const result = await site.run({ context, page, githubCookies, baseUrl, log: siteLog, credentials });
         siteResults.push({
           site: site.id,
           name: site.name,

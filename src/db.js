@@ -136,7 +136,20 @@ export class CheckinDatabase {
       .all(limit);
   }
 
-  recentLogs(limit = 1000) {
+  recentLogs(limit = 1000, site = null) {
+    if (site) {
+      return this.db
+        .prepare(
+          `SELECT logs.id, logs.run_id, logs.created_at, logs.level, logs.event,
+                  logs.message, logs.details_json, logs.site, runs.local_date, runs.status AS run_status
+           FROM logs
+           LEFT JOIN runs ON runs.id = logs.run_id
+           WHERE logs.site = ?
+           ORDER BY logs.created_at DESC, logs.id DESC
+           LIMIT ?`,
+        )
+        .all(site, limit);
+    }
     return this.db
       .prepare(
         `SELECT logs.id, logs.run_id, logs.created_at, logs.level, logs.event,

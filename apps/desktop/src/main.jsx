@@ -38,7 +38,7 @@ function statusLabel(status) {
 
 function siteLabel(site) {
   if (!site) return "全局";
-  return { agentrouter: "AgentRouter", justwoker: "JustDoWork" }[site] || site;
+  return { agentrouter: "AgentRouter", justwoker: "JustDoWork", anyrouter: "AnyRouter" }[site] || site;
 }
 
 function displayRunMessage(message) {
@@ -78,6 +78,42 @@ function Toggle({ checked, onChange, disabled }) {
   return <button disabled={disabled} className={checked ? "toggle on" : "toggle"} onClick={() => onChange(!checked)} aria-pressed={checked}><span /></button>;
 }
 
+function SiteStatusCard({ siteId, siteName, status, balance, onRetry }) {
+  const statusConfig = {
+    success: { icon: CheckCircle2, className: "site-status-success", text: "签到成功" },
+    failure: { icon: X, className: "site-status-failure", text: "签到失败" },
+    auth_required: { icon: CircleAlert, className: "site-status-auth", text: "需要登录" },
+    skipped: { icon: Clock3, className: "site-status-skipped", text: "已跳过" },
+    pending: { icon: Clock3, className: "site-status-pending", text: "等待签到" },
+  };
+  const config = statusConfig[status] || statusConfig.pending;
+  const Icon = config.icon;
+
+  return (
+    <div className={`site-status-card ${config.className}`}>
+      <div className="site-status-header">
+        <span className="site-status-name">{siteName}</span>
+        <span className={`site-status-badge ${config.className}`}><Icon size={14} />{config.text}</span>
+      </div>
+      <div className="site-status-body">
+        {balance ? (
+          <div className="site-status-balance">
+            <strong>{balance.currency}{balance.balance?.toFixed(2) || "—"}</strong>
+            <small>消耗 {balance.currency}{balance.used?.toFixed(2) || "—"}</small>
+          </div>
+        ) : (
+          <div className="site-status-balance"><small>余额未获取</small></div>
+        )}
+      </div>
+      {status === "failure" && onRetry && (
+        <div className="site-status-actions">
+          <button className="text-button" onClick={onRetry}>重新签到</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, onRun, onTaskToggle, onSetup }) {
   const latest = status?.latestRun;
   const success = status?.successfulToday;
@@ -86,6 +122,28 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
   const siteBalances = balance?.ok ? balance.data : (status?.balance || {});
   const siteList = Object.entries(siteBalances || {}).filter(([, v]) => v && v.balance !== undefined);
   const hasAnyBalance = siteList.length > 0;
+
+  // 从最新运行结果获取各站点状态
+  const siteStatuses = React.useMemo(() => {
+    const statuses = {};
+    try {
+      const details = JSON.parse(latest?.details_json || "{}");
+      if (Array.isArray(details.sites)) {
+        details.sites.forEach(s => {
+          statuses[s.site] = s.status;
+        });
+      }
+    } catch {}
+    return statuses;
+  }, [latest]);
+
+  // 定义所有站点
+  const allSites = [
+    { id: "agentrouter", name: "AgentRouter" },
+    { id: "justwoker", name: "JustDoWork" },
+    { id: "anyrouter", name: "AnyRouter" },
+  ];
+
   return (
     <main className="page home-page">
       <header className="page-header">
@@ -113,6 +171,26 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
             {balanceBusy && <div className="balance-updating"><LoaderCircle className="spin" size={13} />更新中</div>}
           </div>
           {!success && <button className="primary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}{setupBusy ? "账号切换中" : "立即签到"}</button>}
+        </div>
+      </section>
+
+      {/* 站点状态卡片 */}
+      <section className="sites-section">
+        <div className="sites-section-header">
+          <h3>站点状态</h3>
+          <p>各站点的签到状态和余额</p>
+        </div>
+        <div className="sites-grid">
+          {allSites.map(site => (
+            <SiteStatusCard
+              key={site.id}
+              siteId={site.id}
+              siteName={site.name}
+              status={siteStatuses[site.id] || (success ? "success" : "pending")}
+              balance={siteBalances[site.id]}
+              onRetry={site.id === "anyrouter" ? onRun : null}
+            />
+          ))}
         </div>
       </section>
 
@@ -206,14 +284,26 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
   );
 }
 
-function LogDialog({ value, onClose, onRefresh }) {
+function LogDialog({ value, onClose, onRefresh, onSiteChange }) {
   if (!value) return null;
   const levelLabel = { info: "信息", warn: "警告", error: "错误" };
+  const sites = [
+    { id: null, name: "全部站点" },
+    { id: "agentrouter", name: "AgentRouter" },
+    { id: "justwoker", name: "JustDoWork" },
+    { id: "anyrouter", name: "AnyRouter" },
+  ];
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="log-dialog" role="dialog" aria-modal="true" aria-labelledby="log-dialog-title">
       <header className="log-dialog-header">
         <div className="log-dialog-title"><span className="log-dialog-icon"><Logs size={20} /></span><div><h2 id="log-dialog-title">运行日志</h2><p>共 {value.logs.length} 条记录，按时间从新到旧排列。</p></div></div>
-        <div className="log-dialog-actions"><button className="secondary-button" disabled={value.loading} onClick={onRefresh}>{value.loading ? <LoaderCircle className="spin" size={15} /> : null}刷新</button><button className="dialog-close static" onClick={onClose} aria-label="关闭"><X size={18} /></button></div>
+        <div className="log-dialog-actions">
+          <select className="site-filter" value={value.site || ""} onChange={(e) => onSiteChange(e.target.value || null)}>
+            {sites.map(s => <option key={s.id || "all"} value={s.id || ""}>{s.name}</option>)}
+          </select>
+          <button className="secondary-button" disabled={value.loading} onClick={onRefresh}>{value.loading ? <LoaderCircle className="spin" size={15} /> : null}刷新</button>
+          <button className="dialog-close static" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </div>
       </header>
       {value.error ? <div className="log-dialog-error"><CircleAlert size={17} />{value.error}</div> : <div className="log-table-wrap">
         <div className="log-table">
@@ -485,13 +575,13 @@ function App() {
   function openMigration(mode) {
     setMigration({ mode, password: "", confirmPassword: "", busy: false, error: null });
   }
-  async function loadLogs() {
-    setLogDialog((current) => ({ logs: current?.logs || [], loading: true, error: null }));
+  async function loadLogs(site = null) {
+    setLogDialog((current) => ({ ...current, logs: current?.logs || [], loading: true, error: null, site }));
     try {
-      const logs = await api.getLogs();
-      setLogDialog({ logs, loading: false, error: null });
+      const logs = await api.getLogs(site);
+      setLogDialog({ logs, loading: false, error: null, site });
     } catch {
-      setLogDialog((current) => ({ logs: current?.logs || [], loading: false, error: "日志读取失败，请稍后重试。" }));
+      setLogDialog((current) => ({ ...current, logs: current?.logs || [], loading: false, error: "日志读取失败，请稍后重试。", site }));
     }
   }
   async function confirmMigration() {
@@ -541,7 +631,7 @@ function App() {
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
     <UpdateDialog value={updateDialog} onClose={() => setUpdateDialog(null)} onDownload={downloadUpdate} onInstall={installUpdateNow} />
-    <LogDialog value={logDialog} onClose={() => setLogDialog(null)} onRefresh={loadLogs} />
+    <LogDialog value={logDialog} onClose={() => setLogDialog(null)} onRefresh={() => loadLogs(logDialog?.site)} onSiteChange={loadLogs} />
     {toast && <div className={`toast ${toast.tone}`}>{toast.tone === "error" ? <CircleAlert size={18} /> : <CheckCircle2 size={18} />}<span>{toast.message}</span></div>}
   </div>;
 }
