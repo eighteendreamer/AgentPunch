@@ -78,50 +78,51 @@ function Toggle({ checked, onChange, disabled }) {
   return <button disabled={disabled} className={checked ? "toggle on" : "toggle"} onClick={() => onChange(!checked)} aria-pressed={checked}><span /></button>;
 }
 
-function SiteStatusCard({ siteId, siteName, status, balance, onRetry }) {
+function SiteStatusCard({ siteName, status, balance, onRetry, retryDisabled }) {
   const statusConfig = {
-    success: { icon: CheckCircle2, className: "site-status-success", text: "签到成功" },
-    failure: { icon: X, className: "site-status-failure", text: "签到失败" },
-    auth_required: { icon: CircleAlert, className: "site-status-auth", text: "需要登录" },
-    skipped: { icon: Clock3, className: "site-status-skipped", text: "已跳过" },
-    pending: { icon: Clock3, className: "site-status-pending", text: "等待签到" },
+    success: { icon: CheckCircle2, className: "ok", text: "签到成功" },
+    failure: { icon: X, className: "bad", text: "签到失败" },
+    auth_required: { icon: CircleAlert, className: "warn", text: "需要登录" },
+    skipped: { icon: Clock3, className: "idle", text: "已跳过" },
+    pending: { icon: Clock3, className: "idle", text: "等待签到" },
   };
   const config = statusConfig[status] || statusConfig.pending;
   const Icon = config.icon;
 
   return (
-    <div className={`site-status-card ${config.className}`}>
-      <div className="site-status-header">
-        <span className="site-status-name">{siteName}</span>
-        <span className={`site-status-badge ${config.className}`}><Icon size={14} />{config.text}</span>
+    <div className="card site-card">
+      <div className="site-card-top">
+        <span className="site-name">{siteName}</span>
+        <span className={`badge ${config.className}`}><Icon size={12} />{config.text}</span>
       </div>
-      <div className="site-status-body">
+      <div className="site-balance">
         {balance ? (
-          <div className="site-status-balance">
+          <>
             <strong>{balance.currency}{balance.balance?.toFixed(2) || "—"}</strong>
-            <small>消耗 {balance.currency}{balance.used?.toFixed(2) || "—"}</small>
-          </div>
+            <small>已消耗 {balance.currency}{balance.used?.toFixed(2) || "—"}</small>
+          </>
         ) : (
-          <div className="site-status-balance"><small>余额未获取</small></div>
+          <>
+            <strong className="dim">—</strong>
+            <small>余额未获取</small>
+          </>
         )}
       </div>
-      {status === "failure" && onRetry && (
-        <div className="site-status-actions">
-          <button className="text-button" onClick={onRetry}>重新签到</button>
-        </div>
+      {(status === "failure" || status === "auth_required") && onRetry && (
+        <button className="retry-button" disabled={retryDisabled} onClick={onRetry}>
+          {retryDisabled ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}重新签到
+        </button>
       )}
     </div>
   );
 }
 
-function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, onRun, onTaskToggle, onSetup }) {
+function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, onRun, onTaskToggle, onSetup, onRefreshBalance }) {
   const latest = status?.latestRun;
   const success = status?.successfulToday;
   const taskOn = status?.task?.installed;
   const githubUsername = status?.account?.githubUsername;
   const siteBalances = balance?.ok ? balance.data : (status?.balance || {});
-  const siteList = Object.entries(siteBalances || {}).filter(([, v]) => v && v.balance !== undefined);
-  const hasAnyBalance = siteList.length > 0;
 
   // 从最新运行结果获取各站点状态
   const siteStatuses = React.useMemo(() => {
@@ -137,7 +138,6 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
     return statuses;
   }, [latest]);
 
-  // 定义所有站点
   const allSites = [
     { id: "agentrouter", name: "AgentRouter" },
     { id: "justwoker", name: "JustDoWork" },
@@ -147,64 +147,61 @@ function HomePage({ status, balance, balanceBusy, busy, setupBusy, setupPhase, o
   return (
     <main className="page home-page">
       <header className="page-header">
-        <div><h1>首页</h1><p>查看签到、余额和自动任务状态。</p></div>
+        <div><h1>概览</h1><p>签到状态、站点余额与自动任务，一目了然。</p></div>
+        <div className="header-actions">
+          <button className="secondary-button" disabled={balanceBusy} onClick={onRefreshBalance}>{balanceBusy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}刷新余额</button>
+          <button className="primary-button" disabled={busy || setupBusy} onClick={() => onRun(Boolean(success))}>
+            {busy || setupBusy ? <LoaderCircle className="spin" size={17} /> : <Play size={17} fill="currentColor" />}
+            {setupBusy ? "账号切换中" : busy ? "签到中" : success ? "再次签到" : "立即签到"}
+          </button>
+        </div>
       </header>
 
-      <section className={success ? "hero-status success" : "hero-status pending"}>
-        <div className="status-overview">
-          <div className="status-symbol">{busy ? <LoaderCircle className="spin" size={42} /> : success ? <CheckCircle2 size={46} /> : <Clock3 size={44} />}</div>
-          <div className="status-copy">
-            <span className="status-kicker">{busy ? "正在运行" : success ? "状态正常" : "等待签到"}</span>
-            <h2>{busy ? "正在完成 GitHub 登录签到" : success ? "今天已经签到" : "今天还没有成功记录"}</h2>
-            <p>{busy ? "正在后台执行签到任务，可继续使用其他功能。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${displayRunMessage(latest.message || statusLabel(latest.status))}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
-          </div>
+      <section className={`card hero-card ${busy ? "running" : success ? "success" : "pending"}`}>
+        <div className="hero-icon">{busy ? <LoaderCircle className="spin" size={26} /> : success ? <CheckCircle2 size={26} /> : <Clock3 size={26} />}</div>
+        <div className="hero-copy">
+          <h2>{busy ? "正在执行签到任务" : success ? "今天已经签到" : "今天还没有成功记录"}</h2>
+          <p>{busy ? "正在后台完成 GitHub 登录签到，可继续使用其他功能。" : latest ? `${formatDate(latest.finished_at || latest.started_at)} · ${displayRunMessage(latest.message || statusLabel(latest.status))}` : "完成首次绑定后，AgentPunch 会自动处理每日签到。"}</p>
         </div>
-        <div className="hero-side">
-          <div className="balance-summary">
-            {hasAnyBalance ? siteList.map(([siteId, snap]) => (
-              <div key={siteId} className="balance-item">
-                <span className="balance-site-name">{siteLabel(siteId)}</span>
-                <strong>{snap.currency}{snap.balance != null ? snap.balance.toFixed(2) : "—"}</strong>
-                <small>消耗 {snap.currency}{snap.used != null ? snap.used.toFixed(2) : "—"}</small>
-              </div>
-            )) : <div className="balance-item"><span>当前余额</span><strong>—</strong><small>{balanceBusy ? "正在后台获取余额" : balance?.error || (status?.initialized ? "余额尚未获取" : "绑定账号后可读取")}</small></div>}
-            {balanceBusy && <div className="balance-updating"><LoaderCircle className="spin" size={13} />更新中</div>}
-          </div>
-          {!success && <button className="primary-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}{setupBusy ? "账号切换中" : "立即签到"}</button>}
+        <div className="hero-fact">
+          <CalendarClock size={18} />
+          <span><small>下次自动运行</small><strong>{taskOn ? status?.task?.nextRunTime ? formatDate(status.task.nextRunTime) : `每天 ${status?.settings?.dailyTime}` : "未启用"}</strong></span>
         </div>
       </section>
 
-      {/* 站点状态卡片 */}
       <section className="sites-section">
-        <div className="sites-section-header">
+        <div className="section-head">
           <h3>站点状态</h3>
-          <p>各站点的签到状态和余额</p>
+          <span className="section-hint">{balanceBusy ? "余额更新中…" : "各站点签到结果与实时余额"}</span>
         </div>
         <div className="sites-grid">
           {allSites.map(site => (
             <SiteStatusCard
               key={site.id}
-              siteId={site.id}
               siteName={site.name}
               status={siteStatuses[site.id] || (success ? "success" : "pending")}
               balance={siteBalances[site.id]}
-              onRetry={site.id === "anyrouter" ? onRun : null}
+              onRetry={() => onRun(true)}
+              retryDisabled={busy || setupBusy}
             />
           ))}
         </div>
       </section>
 
-      <section className="automation-section">
+      <section className="card automation-card">
         <div className="automation-heading">
           <div><h3>自动签到</h3><p>由 Windows 任务计划程序负责，应用关闭后仍可运行。</p></div>
           <div className="automation-switch"><span>{taskOn ? "已开启" : "未开启"}</span><Toggle checked={taskOn} onChange={onTaskToggle} /></div>
         </div>
         <div className="automation-facts">
-          <div className="fact-item"><CalendarClock size={20} /><span><small>下次运行</small><strong>{taskOn ? status?.task?.nextRunTime ? formatDate(status.task.nextRunTime) : `每天 ${status?.settings?.dailyTime}` : "未启用"}</strong></span></div>
-          <div className="fact-item"><CircleUser size={20} /><span><small>GitHub 登录</small><strong>{setupBusy ? setupPhase || "正在绑定" : status?.initialized ? githubUsername ? `已绑定 @${githubUsername}` : "已绑定" : status?.sessionRecoverable ? "可恢复" : "尚未绑定"}</strong></span>{!status?.initialized && (status?.sessionRecoverable ? <button className="text-button" disabled={busy || setupBusy} onClick={onRun}>{busy || setupBusy ? "恢复中" : "恢复登录"}</button> : <button className="text-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? "处理中" : "去绑定"}</button>)}</div>
-          <div className="fact-item"><Database size={20} /><span><small>运行数据</small><strong>仅保存在本机</strong></span></div>
+          <div className="fact-item">
+            <CircleUser size={18} />
+            <span><small>GitHub 登录</small><strong>{setupBusy ? setupPhase || "正在绑定" : status?.initialized ? githubUsername ? `已绑定 @${githubUsername}` : "已绑定" : status?.sessionRecoverable ? "可恢复" : "尚未绑定"}</strong></span>
+            {!status?.initialized && (status?.sessionRecoverable ? <button className="text-button" disabled={busy || setupBusy} onClick={() => onRun(false)}>{busy || setupBusy ? "恢复中" : "恢复登录"}</button> : <button className="text-button" disabled={setupBusy} onClick={onSetup}>{setupBusy ? "处理中" : "去绑定"}</button>)}
+          </div>
+          <div className="fact-item"><Database size={18} /><span><small>运行数据</small><strong>仅保存在本机</strong></span></div>
+          <div className="fact-item"><ShieldCheck size={18} /><span><small>隐私保护</small><strong>密码、Cookie 与 2FA 不入库</strong></span></div>
         </div>
-        <div className="automation-note"><ShieldCheck size={16} /><span>密码、Cookie 与 2FA 密钥不会写入数据库。</span></div>
       </section>
     </main>
   );
@@ -215,7 +212,7 @@ function extractSiteTags(run) {
   try {
     const details = JSON.parse(run.details_json);
     if (Array.isArray(details.sites)) {
-      return details.sites.map((s) => ({ id: s.site, name: siteLabel(s.site), status: s.status }));
+      return details.sites.map((s) => ({ id: s.site, name: siteLabel(s.site), status: s.status, message: s.message }));
     }
   } catch {}
   return [];
@@ -225,18 +222,29 @@ function HistoryPage({ runs }) {
   return (
     <main className="page">
       <header className="page-header"><div><h1>运行历史</h1><p>查看每次自动与手动签到的执行结果。</p></div></header>
-      <section className="table-section">
-        <div className="table-head"><span>日期</span><span>开始时间</span><span>结果</span><span>站点</span><span>签到</span><span>说明</span></div>
+      <section className="history-list">
         {(runs || []).map((run) => {
           const siteTags = extractSiteTags(run);
-          return <div className="table-row" key={run.id}>
-            <span className="history-date">{run.local_date}</span>
-            <span className="history-time">{formatDate(run.started_at)}</span>
-            <span><i className={`mini-dot ${run.status}`} /><b className={`history-result ${run.status}`}>{statusLabel(run.status)}</b></span>
-            <span className="history-sites">{siteTags.length ? siteTags.map((t) => <span key={t.id} className={`site-tag ${t.status}`}>{t.name}</span>) : "—"}</span>
-            <span className={run.checked_in ? "checkin-result yes" : "checkin-result"}>{run.checked_in ? "已签到" : "—"}</span>
-            <span className="history-message" title={run.message}>{displayRunMessage(run.message)}</span>
-          </div>;
+          return <article className="card history-card" key={run.id}>
+            <div className="history-card-head">
+              <span className="history-date">{run.local_date}</span>
+              <span className="history-time">{formatDate(run.started_at)}</span>
+              <span className="history-card-status"><i className={`mini-dot ${run.status}`} /><b className={`history-result ${run.status}`}>{statusLabel(run.status)}</b></span>
+              <span className={run.checked_in ? "checkin-result yes" : "checkin-result"}>{run.checked_in ? "已签到" : "—"}</span>
+            </div>
+            {siteTags.length ? (
+              <div className="history-card-sites">
+                {siteTags.map((t) => (
+                  <div key={t.id} className={`history-site ${t.status}`}>
+                    <span className="history-site-name">{t.name}</span>
+                    <span className="history-site-message">{displayRunMessage(t.message)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="history-card-message" title={run.message}>{displayRunMessage(run.message)}</p>
+            )}
+          </article>;
         })}
         {!runs?.length && <div className="empty-row large">还没有运行记录</div>}
       </section>
@@ -263,7 +271,7 @@ function SettingsPage({ status, setupBusy, setupPhase, onSave, onSetup, onOpenDa
           <div className="setting-group">
             <div className="setting-row"><div><strong>每日执行时间</strong><p>错过时间后会在下次可用时补运行。</p></div><input type="time" value={form.dailyTime} onChange={(e) => setForm({ ...form, dailyTime: e.target.value })} /></div>
             <div className="setting-row"><div><strong>后台运行浏览器</strong><p>关闭后，签到时会显示 Chrome 窗口。</p></div><Toggle checked={form.headless} onChange={(value) => setForm({ ...form, headless: value })} /></div>
-            <div className="setting-row"><div><strong>运行日志</strong><p>按时间查看签到与 OAuth 执行过程。</p></div><button className="secondary-button" onClick={onOpenLogs}>查看日志 <ChevronRight size={15} /></button></div>
+            <div className="setting-row"><div><strong>运行日志</strong><p>按时间查看签到与 OAuth 执行过程。</p></div><button className="secondary-button" onClick={() => onOpenLogs()}>查看日志 <ChevronRight size={15} /></button></div>
           </div>
         </div>
         <div className="settings-column account-column">
@@ -509,15 +517,16 @@ function App() {
     }
   }
 
-  // 签到：后台执行，不阻塞页面切换
-  async function runNow() {
+  // 签到：后台执行，不阻塞页面切换；force 为手动强制签到（即使今天已成功）
+  async function runNow(force = false) {
     if (busy || setupBusy) return;
     setBusy(true);
     setBusyLabel("签到中");
     try {
-      const result = await api.runCheckin(false);
-      notify(result.ok ? "签到任务已完成" : result.output?.includes("已有签到进程") ? "余额更新完成后，请再试一次签到" : "签到失败，请查看运行历史", result.ok ? "ok" : "error");
+      const result = await api.runCheckin(force);
+      notify(result.ok ? "签到任务已完成" : result.output?.includes("已有签到进程") ? "已有签到进程在运行，请稍后再试" : "签到失败，请查看运行历史", result.ok ? "ok" : "error");
       await refresh();
+      if (result.ok) refreshBalance(false);
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -625,9 +634,9 @@ function App() {
 
   return <div className="app-shell"><Sidebar page={page} setPage={setPage} busy={sidebarBusy} updateBadge={updateBadge} />
     <div className="workspace">
-      {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} />}
+      {page === "home" && <HomePage status={status} balance={balance} balanceBusy={balanceBusy} busy={busy} setupBusy={setupBusy} setupPhase={setupPhase} onRun={runNow} onTaskToggle={toggleTask} onSetup={setup} onRefreshBalance={() => refreshBalance(true)} />}
       {page === "history" && <HistoryPage runs={status?.runs} />}
-      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} onRun={runNow} busy={busy} updateState={updateState} />}
+      {page === "settings" && <SettingsPage status={status} setupBusy={setupBusy} setupPhase={setupPhase} onSave={saveSettings} onSetup={setup} onOpenData={() => api.openDataFolder()} onMigration={openMigration} onOpenLogs={loadLogs} onCheckUpdate={checkUpdate} onRun={() => runNow(false)} busy={busy} updateState={updateState} />}
     </div>
     <MigrationDialog value={migration} onChange={setMigration} onClose={() => setMigration(null)} onConfirm={confirmMigration} />
     <UpdateDialog value={updateDialog} onClose={() => setUpdateDialog(null)} onDownload={downloadUpdate} onInstall={installUpdateNow} />
